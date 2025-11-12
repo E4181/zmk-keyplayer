@@ -62,4 +62,11 @@
                 RC(4,1)         RC(4,3)         RC(4,5)         RC(4,7)                 RC(4,9)          RC(4,11) RC(4,12)          RC(4,14) RC(4,15) RC(4,16) RC(4,17)
         >;
     };
+
+    backlight: pwmleds {
+        compatible = "pwm-leds";
+        pwm_led_0 {
+            pwms = <&pwm0 0 PWM_MSEC(10) PWM_POLARITY_NORMAL>;
+        };
+    };
 };
