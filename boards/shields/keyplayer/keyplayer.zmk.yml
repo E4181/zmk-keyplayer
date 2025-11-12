@@ -1,0 +1,11 @@
+file_format: "1"
+id: keyplayer
+name: keyplayer
+type: shield
+url: 
+requires: [nrfmicro_13_52840]
+features:
+  - keys
+  - studio
+  - underglow
+  - backlight

@@ -1,0 +1,16 @@
+if SHIELD_KEYPLAYER
+
+config ZMK_KEYBOARD_NAME
+    default "keyplayer"
+      
+endif
+
+if ZMK_BACKLIGHT
+
+config PWM
+    default y
+
+config LED_PWM
+    default y
+
+endif # ZMK_BACKLIGHT
