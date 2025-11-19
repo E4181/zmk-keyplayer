@@ -60,3 +60,4 @@
     pinctrl-1 = <&pwm0_sleep>;
     pinctrl-names = "default", "sleep";
 };
+
