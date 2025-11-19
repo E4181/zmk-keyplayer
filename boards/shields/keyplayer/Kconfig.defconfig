@@ -14,3 +14,10 @@ config LED_PWM
     default y
 
 endif # ZMK_BACKLIGHT
+
+config GPIO_MCP23017
+    bool "MCP23017 I2C GPIO expander"
+    default y
+    depends on I2C
+    help
+      Enable driver for Microchip MCP23017 I2C-based GPIO expansion chip.
