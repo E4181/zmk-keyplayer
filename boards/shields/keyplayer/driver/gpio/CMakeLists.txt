@@ -1,0 +1,1 @@
+zephyr_library_sources_ifdef(CONFIG_GPIO_MCP23017 gpio_mcp23017.c)
