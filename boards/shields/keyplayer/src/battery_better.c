@@ -1,6 +1,6 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 修正版本 - 使用ZMK实际存在的API
+ * 修正版本 - 修复编译错误
  */
 
 #include <zephyr/kernel.h>
@@ -64,7 +64,7 @@ static uint32_t load_compensation(uint32_t voltage);
 static uint8_t calculate_battery_percentage(uint32_t voltage);
 static void update_sampling_strategy(void);
 static void battery_work_handler(struct k_work *work);
-static void keyboard_activity_handler(const struct zmk_keycode_state_changed *ev);
+static int keyboard_activity_handler(const zmk_event_t *eh);
 
 // 工作队列
 static K_WORK_DELAYABLE_DEFINE(battery_work, battery_work_handler);
@@ -184,7 +184,7 @@ static uint8_t calculate_battery_percentage(uint32_t voltage)
 static void update_sampling_strategy(void)
 {
     uint32_t current_time = k_uptime_get();
-    uint32_t sampling_interval;
+    k_timeout_t sampling_interval;
     
     if (current_time - batt_data.last_activity_time < ACTIVITY_TIMEOUT) {
         // 活跃状态，快速采样
@@ -239,14 +239,21 @@ reschedule:
 /**
  * 键盘活动事件处理
  */
-static void keyboard_activity_handler(const struct zmk_keycode_state_changed *ev)
+static int keyboard_activity_handler(const zmk_event_t *eh)
 {
+    const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
+    if (ev == NULL) {
+        return -ENOTSUP;
+    }
+    
     batt_data.last_activity_time = k_uptime_get();
     
     // 如果从空闲变为活跃，立即采样一次
     if (!batt_data.keyboard_active) {
         k_work_reschedule(&battery_work, K_MSEC(100));
     }
+    
+    return 0;
 }
 
 /**
