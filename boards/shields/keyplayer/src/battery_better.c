@@ -1,12 +1,12 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 修正版本 - 使用ZMK实际存在的API
+ * 完全独立的电池驱动实现
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include <zmk/battery.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
@@ -19,6 +19,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define FAST_SAMPLING_INTERVAL   5      // 秒
 #define SLOW_SAMPLING_INTERVAL   30     // 秒
 #define ACTIVITY_TIMEOUT         30000  // 毫秒
+
+// ADC配置
+#define ADC_RESOLUTION           12
+#define ADC_GAIN                 ADC_GAIN_1_4
+#define ADC_REFERENCE            ADC_REF_INTERNAL
+#define ADC_ACQUISITION_TIME     ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 10)
 
 // 电池电压到电量的映射表（针对典型锂电池）
 static const struct battery_voltage_map {
@@ -45,6 +51,13 @@ struct battery_data {
     uint8_t current_percentage;
     bool history_initialized;
     bool keyboard_active;
+    
+    // ADC相关
+    const struct device *adc_device;
+    uint16_t adc_buffer;
+    struct adc_sequence adc_sequence;
+    struct adc_channel_cfg adc_channel_cfg;
+    int8_t adc_channel_id;
 };
 
 static struct battery_data batt_data = {
@@ -54,10 +67,14 @@ static struct battery_data batt_data = {
     .current_voltage = 0,
     .current_percentage = 0,
     .history_initialized = false,
-    .keyboard_active = false
+    .keyboard_active = false,
+    .adc_device = NULL,
+    .adc_channel_id = -1
 };
 
 // 函数声明
+static int adc_init(void);
+static uint32_t read_battery_voltage(void);
 static uint32_t moving_average_filter(uint32_t new_voltage);
 static uint32_t median_filter(uint32_t new_voltage);
 static uint32_t load_compensation(uint32_t voltage);
@@ -65,6 +82,7 @@ static uint8_t calculate_battery_percentage(uint32_t voltage);
 static void update_sampling_strategy(void);
 static void battery_work_handler(struct k_work *work);
 static int keyboard_activity_handler(const zmk_event_t *eh);
+static void publish_battery_event(uint32_t voltage, uint8_t percentage);
 
 // 工作队列
 static K_WORK_DELAYABLE_DEFINE(battery_work, battery_work_handler);
@@ -72,6 +90,85 @@ static K_WORK_DELAYABLE_DEFINE(battery_work, battery_work_handler);
 // 事件监听器
 ZMK_LISTENER(battery_optimized, keyboard_activity_handler);
 ZMK_SUBSCRIPTION(battery_optimized, zmk_keycode_state_changed);
+
+/**
+ * ADC初始化
+ */
+static int adc_init(void)
+{
+    // 获取ADC设备 - 根据你的硬件配置调整
+    batt_data.adc_device = DEVICE_DT_GET(DT_NODELABEL(adc));
+    if (!device_is_ready(batt_data.adc_device)) {
+        LOG_ERR("ADC device not ready");
+        return -ENODEV;
+    }
+    
+    // 配置ADC通道 - 使用SAADC通道0，根据你的硬件调整
+    batt_data.adc_channel_cfg = (struct adc_channel_cfg){
+        .gain = ADC_GAIN,
+        .reference = ADC_REFERENCE,
+        .acquisition_time = ADC_ACQUISITION_TIME,
+        .channel_id = 0,  // SAADC通道0
+        .input_positive = SAADC_CH_PSELP_PSELP_AnalogInput0 + 2  // AIN2，根据硬件调整
+    };
+    
+    int err = adc_channel_setup(batt_data.adc_device, &batt_data.adc_channel_cfg);
+    if (err) {
+        LOG_ERR("Failed to setup ADC channel: %d", err);
+        return err;
+    }
+    
+    // 配置ADC序列
+    batt_data.adc_sequence = (struct adc_sequence){
+        .channels = BIT(0),
+        .buffer = &batt_data.adc_buffer,
+        .buffer_size = sizeof(batt_data.adc_buffer),
+        .resolution = ADC_RESOLUTION,
+        .oversampling = 4,  // 4倍过采样提高精度
+        .calibrate = true
+    };
+    
+    LOG_INF("ADC initialized successfully");
+    return 0;
+}
+
+/**
+ * 读取电池电压
+ */
+static uint32_t read_battery_voltage(void)
+{
+    if (batt_data.adc_device == NULL) {
+        LOG_ERR("ADC device not initialized");
+        return 0;
+    }
+    
+    int ret = adc_read(batt_data.adc_device, &batt_data.adc_sequence);
+    if (ret != 0) {
+        LOG_ERR("ADC read failed: %d", ret);
+        return 0;
+    }
+    
+    // 将ADC值转换为电压（毫伏）
+    // 假设分压电阻配置：2M + 806K，参考电压0.6V，增益1/4
+    // 实际计算需要根据你的硬件分压电路调整
+    
+    // nRF52 SAADC参考电压为0.6V，增益1/4时量程为2.4V
+    int32_t adc_value = batt_data.adc_buffer;
+    int32_t adc_max = (1 << ADC_RESOLUTION) - 1;
+    
+    // 计算ADC输入电压（毫伏）
+    // 参考电压600mV * 增益4 = 2400mV量程
+    int32_t adc_voltage_mv = (adc_value * 2400) / adc_max;
+    
+    // 计算实际电池电压（考虑分压电阻）
+    // 分压比例 = (R1 + R2) / R2 = (2000000 + 806000) / 806000 ≈ 3.48
+    int32_t battery_voltage_mv = (adc_voltage_mv * 2806) / 806;
+    
+    LOG_DBG("ADC value: %d, ADC voltage: %dmV, Battery voltage: %dmV", 
+            adc_value, adc_voltage_mv, battery_voltage_mv);
+    
+    return (uint32_t)battery_voltage_mv;
+}
 
 /**
  * 移动平均滤波器
@@ -197,17 +294,30 @@ static void update_sampling_strategy(void)
     k_work_reschedule(&battery_work, sampling_interval);
 }
 
-// 声明外部函数 - 这些是ZMK内部函数，我们需要声明它们
-extern uint32_t zmk_battery_get_voltage(void);
-extern struct zmk_battery_state_changed *zmk_battery_state_changed_from_voltage(uint32_t voltage);
+/**
+ * 发布电池事件
+ */
+static void publish_battery_event(uint32_t voltage, uint8_t percentage)
+{
+    // 创建电池状态改变事件
+    struct zmk_battery_state_changed *ev = new_zmk_battery_state_changed();
+    if (ev) {
+        // 设置电量百分比
+        ev->level_of_charge = percentage;
+        ZMK_EVENT_RAISE(ev);
+        LOG_DBG("Published battery event: %d%% (%dmV)", percentage, voltage);
+    } else {
+        LOG_ERR("Failed to create battery event");
+    }
+}
 
 /**
  * 电池工作处理函数
  */
 static void battery_work_handler(struct k_work *work)
 {
-    // 获取原始电池电压读数
-    uint32_t raw_voltage = zmk_battery_get_voltage();
+    // 读取原始电池电压
+    uint32_t raw_voltage = read_battery_voltage();
     
     if (raw_voltage == 0) {
         LOG_WRN("Failed to read battery voltage");
@@ -229,11 +339,8 @@ static void battery_work_handler(struct k_work *work)
     LOG_DBG("Battery: %dmV -> %d%% (raw: %dmV)", 
             filtered_voltage, percentage, raw_voltage);
     
-    // 发布电池更新事件 - 使用ZMK实际的函数
-    struct zmk_battery_state_changed *ev = zmk_battery_state_changed_from_voltage(filtered_voltage);
-    if (ev) {
-        ZMK_EVENT_RAISE(ev);
-    }
+    // 发布电池更新事件
+    publish_battery_event(filtered_voltage, percentage);
 
 reschedule:
     update_sampling_strategy();
@@ -297,8 +404,15 @@ int battery_better_init(void)
 {
     LOG_INF("Initializing optimized battery monitoring");
     
+    // 初始化ADC
+    int ret = adc_init();
+    if (ret != 0) {
+        LOG_ERR("ADC initialization failed: %d", ret);
+        return ret;
+    }
+    
     // 初始化历史数据
-    uint32_t initial_voltage = zmk_battery_get_voltage();
+    uint32_t initial_voltage = read_battery_voltage();
     if (initial_voltage > 0) {
         for (int i = 0; i < MOVING_AVERAGE_SAMPLES; i++) {
             batt_data.voltage_history[i] = initial_voltage;
@@ -309,6 +423,9 @@ int battery_better_init(void)
         batt_data.history_initialized = true;
         batt_data.current_voltage = initial_voltage;
         batt_data.current_percentage = calculate_battery_percentage(initial_voltage);
+        
+        // 发布初始电池状态
+        publish_battery_event(initial_voltage, batt_data.current_percentage);
     }
     
     // 设置初始活动时间
