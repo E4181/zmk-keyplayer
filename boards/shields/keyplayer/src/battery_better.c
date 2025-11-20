@@ -1,6 +1,6 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 修正版本 - 修复编译错误
+ * 修正版本 - 使用ZMK实际存在的API
  */
 
 #include <zephyr/kernel.h>
@@ -197,6 +197,10 @@ static void update_sampling_strategy(void)
     k_work_reschedule(&battery_work, sampling_interval);
 }
 
+// 声明外部函数 - 这些是ZMK内部函数，我们需要声明它们
+extern uint32_t zmk_battery_get_voltage(void);
+extern struct zmk_battery_state_changed *zmk_battery_state_changed_from_voltage(uint32_t voltage);
+
 /**
  * 电池工作处理函数
  */
@@ -225,10 +229,9 @@ static void battery_work_handler(struct k_work *work)
     LOG_DBG("Battery: %dmV -> %d%% (raw: %dmV)", 
             filtered_voltage, percentage, raw_voltage);
     
-    // 发布电池更新事件
-    struct zmk_battery_state_changed *ev = new_zmk_battery_state_changed();
+    // 发布电池更新事件 - 使用ZMK实际的函数
+    struct zmk_battery_state_changed *ev = zmk_battery_state_changed_from_voltage(filtered_voltage);
     if (ev) {
-        ev->voltage = filtered_voltage;
         ZMK_EVENT_RAISE(ev);
     }
 
