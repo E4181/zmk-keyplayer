@@ -11,7 +11,7 @@ extern "C" {
  * @brief 获取优化后的电池电压
  * @return 电池电压（毫伏）
  */
-uint32_t battery_better_get_voltage(void);
+uint16_t battery_better_get_voltage(void);
 
 /**
  * @brief 获取优化后的电池电量百分比
@@ -36,7 +36,7 @@ int battery_better_init(void);
  * @param measured_voltage 实际测量的电池电压（毫伏）
  * @return 0表示成功，负数表示错误
  */
-int battery_better_calibrate(uint32_t measured_voltage);
+int battery_better_calibrate(uint16_t measured_voltage);
 
 #ifdef __cplusplus
 }
