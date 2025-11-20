@@ -16,7 +16,17 @@
         zmk,studio-rpc-uart = &uart0;
 		zmk,underglow = &led_strip;
         zmk,backlight = &backlight;
+        zmk,battery = &vbatt;
     };
+
+    vbatt: vbatt {
+        compatible = "zmk,battery-voltage-divider";
+        label = "VBATT";
+        io-channels = <&adc 2>; // 根据实际ADC通道调整
+        output-ohms = <2000000>;
+        full-ohms = <(2000000 + 806000)>;
+    };
+
 
     kscan0: kscan {
         compatible = "zmk,kscan-gpio-matrix";
