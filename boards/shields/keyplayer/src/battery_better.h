@@ -26,17 +26,17 @@ uint8_t battery_better_get_percentage(void);
 const char* battery_better_get_status_string(void);
 
 /**
+ * @brief 处理原始电池读数并返回优化后的值
+ * @param raw_voltage 原始电压读数
+ * @return 优化后的电压值
+ */
+uint16_t battery_better_filter_voltage(uint16_t raw_voltage);
+
+/**
  * @brief 初始化优化电池监测系统
  * @return 0表示成功，负数表示错误
  */
 int battery_better_init(void);
-
-/**
- * @brief 电池校准
- * @param measured_voltage 实际测量的电池电压（毫伏）
- * @return 0表示成功，负数表示错误
- */
-int battery_better_calibrate(uint16_t measured_voltage);
 
 #ifdef __cplusplus
 }

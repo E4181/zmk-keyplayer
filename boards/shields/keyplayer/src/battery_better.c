@@ -1,15 +1,12 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 修正版本 - 使用正确的ZMK事件API
+ * 简化版本 - 只实现滤波功能
  */
 
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/adc.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
 #include <zmk/event_manager.h>
-#include <zmk/events/battery_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
 
 #include "battery_common.h"
@@ -57,7 +54,6 @@ static uint16_t load_compensation(uint16_t voltage);
 static void update_sampling_strategy(void);
 static void battery_work_handler(struct k_work *work);
 static int keyboard_activity_handler(const zmk_event_t *eh);
-static void publish_battery_event(uint16_t voltage, uint8_t percentage);
 
 // 事件监听器
 ZMK_LISTENER(battery_optimized, keyboard_activity_handler);
@@ -160,20 +156,6 @@ static void update_sampling_strategy(void)
 }
 
 /**
- * 发布电池事件 - 使用正确的ZMK事件API
- */
-static void publish_battery_event(uint16_t voltage, uint8_t percentage)
-{
-    // 创建电池状态改变事件 - 使用正确的API
-    struct zmk_battery_state_changed *ev = zmk_battery_state_changed_from_voltage(voltage);
-    if (ev) {
-        LOG_DBG("Published optimized battery event: %d%% (%dmV)", percentage, voltage);
-    } else {
-        LOG_ERR("Failed to create battery event");
-    }
-}
-
-/**
  * 从原始电池传感器读取数据
  */
 static int read_raw_battery_data(uint16_t *millivolts, uint8_t *percentage)
@@ -248,9 +230,6 @@ static void battery_work_handler(struct k_work *work)
     
     LOG_DBG("Optimized battery: %dmV -> %d%% (raw: %dmV -> %d%%)", 
             filtered_voltage, filtered_percentage, raw_millivolts, raw_percentage);
-    
-    // 发布电池更新事件
-    publish_battery_event(filtered_voltage, filtered_percentage);
 
 reschedule:
     update_sampling_strategy();
@@ -308,6 +287,24 @@ const char* battery_better_get_status_string(void)
 }
 
 /**
+ * 处理原始电池读数并返回优化后的值
+ * 这个函数可以在现有的电池驱动中调用
+ */
+uint16_t battery_better_filter_voltage(uint16_t raw_voltage)
+{
+    // 应用滤波算法
+    uint16_t filtered_voltage = moving_average_filter(raw_voltage);
+    filtered_voltage = median_filter(filtered_voltage);
+    filtered_voltage = load_compensation(filtered_voltage);
+    
+    // 更新电池数据
+    opt_batt_data.filtered_millivolts = filtered_voltage;
+    opt_batt_data.filtered_state_of_charge = lithium_ion_mv_to_pct((int16_t)filtered_voltage);
+    
+    return filtered_voltage;
+}
+
+/**
  * 初始化优化电池监测
  */
 int battery_better_init(void)
@@ -333,9 +330,6 @@ int battery_better_init(void)
         opt_batt_data.history_initialized = true;
         opt_batt_data.filtered_millivolts = initial_voltage;
         opt_batt_data.filtered_state_of_charge = initial_percentage;
-        
-        // 发布初始电池状态
-        publish_battery_event(initial_voltage, initial_percentage);
     }
     
     // 设置初始活动时间
@@ -345,22 +339,6 @@ int battery_better_init(void)
     k_work_reschedule(&opt_batt_data.battery_work, K_SECONDS(2));
     
     LOG_INF("Optimized battery monitoring initialized");
-    return 0;
-}
-
-/**
- * 电池校准函数（用于手动校准）
- */
-int battery_better_calibrate(uint16_t measured_voltage)
-{
-    if (measured_voltage < 3000 || measured_voltage > 4500) {
-        LOG_ERR("Invalid calibration voltage: %dmV", measured_voltage);
-        return -EINVAL;
-    }
-    
-    LOG_INF("Battery calibration: measured %dmV, current reading %dmV", 
-            measured_voltage, opt_batt_data.filtered_millivolts);
-    
     return 0;
 }
 
