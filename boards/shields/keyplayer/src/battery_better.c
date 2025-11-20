@@ -1,6 +1,6 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 基于ZMK电池驱动API的优化版本
+ * 修正版本 - 使用正确的ZMK事件API
  */
 
 #include <zephyr/kernel.h>
@@ -25,9 +25,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // 优化电池数据结构
 struct optimized_battery_data {
-    // 原始电池数据结构
-    struct battery_value raw_value;
-    
     // 滤波数据
     uint16_t voltage_history[MOVING_AVERAGE_SAMPLES];
     uint16_t median_buffer[MEDIAN_FILTER_SAMPLES];
@@ -57,7 +54,6 @@ static struct optimized_battery_data opt_batt_data = {
 static uint16_t moving_average_filter(uint16_t new_voltage);
 static uint16_t median_filter(uint16_t new_voltage);
 static uint16_t load_compensation(uint16_t voltage);
-static uint8_t calculate_battery_percentage(uint16_t voltage);
 static void update_sampling_strategy(void);
 static void battery_work_handler(struct k_work *work);
 static int keyboard_activity_handler(const zmk_event_t *eh);
@@ -145,31 +141,6 @@ static uint16_t load_compensation(uint16_t voltage)
 }
 
 /**
- * 计算电池电量百分比 - 使用ZMK的算法但可以自定义
- */
-static uint8_t calculate_battery_percentage(uint16_t voltage)
-{
-    // 使用ZMK的标准算法
-    return lithium_ion_mv_to_pct((int16_t)voltage);
-    
-    // 或者使用自定义的映射表（如果需要更精确的映射）
-    /*
-    if (voltage >= 4200) return 100;
-    if (voltage <= 3200) return 0;
-    
-    // 自定义线性插值
-    for (int i = 0; i < 20; i++) {
-        uint16_t lower_volt = 3200 + i * 50;
-        uint16_t upper_volt = lower_volt + 50;
-        if (voltage >= lower_volt && voltage <= upper_volt) {
-            return i * 5;
-        }
-    }
-    return 50;
-    */
-}
-
-/**
  * 更新采样策略
  */
 static void update_sampling_strategy(void)
@@ -189,16 +160,13 @@ static void update_sampling_strategy(void)
 }
 
 /**
- * 发布电池事件
+ * 发布电池事件 - 使用正确的ZMK事件API
  */
 static void publish_battery_event(uint16_t voltage, uint8_t percentage)
 {
-    // 创建电池状态改变事件
-    struct zmk_battery_state_changed *ev = new_zmk_battery_state_changed();
+    // 创建电池状态改变事件 - 使用正确的API
+    struct zmk_battery_state_changed *ev = zmk_battery_state_changed_from_voltage(voltage);
     if (ev) {
-        // 设置电量百分比
-        ev->level_of_charge = percentage;
-        ZMK_EVENT_RAISE(ev);
         LOG_DBG("Published optimized battery event: %d%% (%dmV)", percentage, voltage);
     } else {
         LOG_ERR("Failed to create battery event");
@@ -271,8 +239,8 @@ static void battery_work_handler(struct k_work *work)
     filtered_voltage = median_filter(filtered_voltage);
     filtered_voltage = load_compensation(filtered_voltage);
     
-    // 计算电量百分比
-    uint8_t filtered_percentage = calculate_battery_percentage(filtered_voltage);
+    // 使用ZMK的标准算法计算电量百分比
+    uint8_t filtered_percentage = lithium_ion_mv_to_pct((int16_t)filtered_voltage);
     
     // 更新电池数据
     opt_batt_data.filtered_millivolts = filtered_voltage;
