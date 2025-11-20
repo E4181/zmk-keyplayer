@@ -1,20 +1,19 @@
 /*
  * Optimized Battery Monitoring for ZMK
- * 修正版本 - 使用ZMK兼容的配置
+ * 修正版本 - 使用ZMK实际存在的API
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/logging/log.h>
 #include <zmk/battery.h>
-#include <zmk/events.h>
 #include <zmk/event_manager.h>
-#include <zmk/endpoints.h>
-#include <drivers/sensor.h>
+#include <zmk/events/battery_state_changed.h>
+#include <zmk/events/keycode_state_changed.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-// 配置参数 - 在代码中硬定义，因为Kconfig可能不支持
+// 配置参数
 #define MOVING_AVERAGE_SAMPLES   8
 #define MEDIAN_FILTER_SAMPLES    5
 #define FAST_SAMPLING_INTERVAL   5      // 秒
@@ -65,7 +64,7 @@ static uint32_t load_compensation(uint32_t voltage);
 static uint8_t calculate_battery_percentage(uint32_t voltage);
 static void update_sampling_strategy(void);
 static void battery_work_handler(struct k_work *work);
-static int keyboard_activity_handler(const zmk_event_t *eh);
+static void keyboard_activity_handler(const struct zmk_keycode_state_changed *ev);
 
 // 工作队列
 static K_WORK_DELAYABLE_DEFINE(battery_work, battery_work_handler);
@@ -226,11 +225,10 @@ static void battery_work_handler(struct k_work *work)
     LOG_DBG("Battery: %dmV -> %d%% (raw: %dmV)", 
             filtered_voltage, percentage, raw_voltage);
     
-    // 发布电池更新事件 - 使用ZMK标准事件
+    // 发布电池更新事件
     struct zmk_battery_state_changed *ev = new_zmk_battery_state_changed();
     if (ev) {
         ev->voltage = filtered_voltage;
-        // 注意：ZMK事件可能使用不同的字段名，根据实际情况调整
         ZMK_EVENT_RAISE(ev);
     }
 
@@ -241,7 +239,7 @@ reschedule:
 /**
  * 键盘活动事件处理
  */
-static int keyboard_activity_handler(const zmk_event_t *eh)
+static void keyboard_activity_handler(const struct zmk_keycode_state_changed *ev)
 {
     batt_data.last_activity_time = k_uptime_get();
     
@@ -249,8 +247,6 @@ static int keyboard_activity_handler(const zmk_event_t *eh)
     if (!batt_data.keyboard_active) {
         k_work_reschedule(&battery_work, K_MSEC(100));
     }
-    
-    return 0;
 }
 
 /**
