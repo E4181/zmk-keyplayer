@@ -15,5 +15,11 @@ properties:
 
   chrg-active-low:
     type: boolean
-    default: true
     description: Whether the CHRG pin is active low (true for TP4056).
+    # 注意：布尔类型不要设置 default，使用 'category: flag' 表示它是标志位
+    category: flag
+
+  status:
+    type: string
+    description: Device status (okay, disabled, etc.)
+    default: "okay"
