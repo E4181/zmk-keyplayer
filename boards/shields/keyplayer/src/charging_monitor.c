@@ -2,9 +2,9 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
-#include <zephyr/settings/settings.h>
+#include <string.h>
 
-LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
+LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 
 #include "charging_monitor.h"
 
@@ -19,15 +19,6 @@ LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
 #define IDLE_TIMEOUT_MS CONFIG_CHARGING_MONITOR_IDLE_TIMEOUT_MS
 #define IDLE_MULTIPLIER CONFIG_CHARGING_MONITOR_IDLE_MULTIPLIER
 #define MAX_CONSECUTIVE_ERRORS CONFIG_CHARGING_MONITOR_MAX_ERRORS
-
-// 错误类型枚举
-enum error_type {
-    ERROR_NONE = 0,
-    ERROR_GPIO_READ,
-    ERROR_GPIO_CONFIG,
-    ERROR_DEVICE_NOT_READY,
-    ERROR_MAX
-};
 
 // 优化的充电监控器私有数据结构
 struct charging_monitor_data {
@@ -63,7 +54,7 @@ struct charging_monitor_data {
     int64_t last_successful_read;
     
     // 错误信息
-    enum error_type last_error;
+    charging_error_t last_error;
     int64_t last_error_time;
     
     // 控制标志
@@ -93,7 +84,7 @@ static struct charging_monitor_data *get_data(void)
         .charging_start_time = 0,
         .last_activity_time = 0,
         .last_successful_read = 0,
-        .last_error = ERROR_NONE,
+        .last_error = CHARGING_ERROR_NONE,
         .last_error_time = 0,
         .initialized = false,
         .polling_active = true,
@@ -182,7 +173,7 @@ static uint32_t calculate_polling_interval(charging_state_t state, bool system_i
 }
 
 // 记录错误（智能错误恢复）
-static void record_error(enum error_type error, int ret_code)
+static void record_error(charging_error_t error, int ret_code)
 {
     struct charging_monitor_data *data = get_data();
     
@@ -330,7 +321,7 @@ static void status_check_work_handler(struct k_work *work)
     int pin_state = gpio_pin_get(data->gpio_dev, CHRG_GPIO_PIN);
     
     if (pin_state < 0) {
-        record_error(ERROR_GPIO_READ, pin_state);
+        record_error(CHARGING_ERROR_GPIO_READ, pin_state);
         set_current_state(CHARGING_STATE_ERROR);
         
         // 智能调度下一次检查
@@ -420,7 +411,7 @@ int charging_monitor_init(void)
     ret = gpio_pin_configure(data->gpio_dev, CHRG_GPIO_PIN, GPIO_INPUT | CHRG_GPIO_FLAGS);
     if (ret < 0) {
         LOG_ERR("Failed to configure CHRG GPIO: %d", ret);
-        record_error(ERROR_GPIO_CONFIG, ret);
+        record_error(CHARGING_ERROR_GPIO_CONFIG, ret);
         return ret;
     }
     
@@ -447,7 +438,7 @@ int charging_monitor_init(void)
                 (init_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL");
     } else {
         LOG_ERR("Failed to read initial CHRG pin state: %d", initial_state);
-        record_error(ERROR_GPIO_READ, initial_state);
+        record_error(CHARGING_ERROR_GPIO_READ, initial_state);
         set_current_state(CHARGING_STATE_ERROR);
     }
     

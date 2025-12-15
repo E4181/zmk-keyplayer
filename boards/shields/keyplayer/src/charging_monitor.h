@@ -17,15 +17,18 @@ typedef enum {
 
 // 错误类型枚举
 typedef enum {
-    ERROR_NONE = 0,
-    ERROR_GPIO_READ,
-    ERROR_GPIO_CONFIG,
-    ERROR_DEVICE_NOT_READY,
-    ERROR_MAX
+    CHARGING_ERROR_NONE = 0,
+    CHARGING_ERROR_GPIO_READ,
+    CHARGING_ERROR_GPIO_CONFIG,
+    CHARGING_ERROR_DEVICE_NOT_READY,
+    CHARGING_ERROR_MAX
 } charging_error_t;
 
+// 充电状态变化回调函数类型
+typedef void (*charging_state_changed_cb_t)(charging_state_t new_state);
+
 // 统计信息结构体
-typedef struct {
+struct charging_monitor_stats {
     uint32_t total_state_changes;   // 总状态变化次数
     uint32_t total_errors;          // 总错误次数
     uint8_t consecutive_errors;     // 连续错误次数
@@ -35,10 +38,7 @@ typedef struct {
     int64_t last_successful_read;   // 最后成功读取时间
     bool system_idle;               // 系统是否空闲
     bool polling_active;            // 轮询是否激活
-} charging_monitor_stats;
-
-// 充电状态变化回调函数类型
-typedef void (*charging_state_changed_cb_t)(charging_state_t new_state);
+};
 
 // API接口
 int charging_monitor_init(void);

@@ -5,8 +5,6 @@
 LOG_MODULE_REGISTER(charging_backlight, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/backlight.h>
-#include <zmk/events/activity_state_changed.h>
-#include <zmk/activity.h>
 #include "charging_monitor.h"
 
 static struct k_work_delayable init_work;
@@ -30,9 +28,6 @@ static void on_charging_state_changed(charging_state_t new_state)
         break;
     }
 }
-
-// --- 简化：只保留核心功能，移除活动状态监听 ---
-// 注意：ZMK的电源管理回调仍然有效（在charging_monitor.c中已实现）
 
 // 延迟初始化工作函数
 static void delayed_init_work_handler(struct k_work *work)
