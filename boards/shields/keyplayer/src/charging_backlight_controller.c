@@ -64,5 +64,5 @@ static int charging_backlight_controller_init(void)
     return 0;
 }
 
-// 使用早期的初始化级别
-SYS_INIT(charging_backlight_controller_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+// 使用 ZMK 中常见的初始化优先级 - 99 是较低的优先级，确保在其他功能之后初始化
+SYS_INIT(charging_backlight_controller_init, APPLICATION, 99);
