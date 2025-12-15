@@ -1,8 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/pm/device.h>
-#include <zephyr/pm/pm.h>
+#include <stdatomic.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 
@@ -32,7 +31,6 @@ struct charging_monitor_data {
     struct k_work_delayable status_check_work;
     atomic_int polling_interval_ms;
     atomic_bool polling_active;
-    atomic_bool system_suspended;
     
     // 异步回调处理
     struct k_work callback_work;
@@ -46,6 +44,10 @@ struct charging_monitor_data {
     
     // 初始化标志
     atomic_bool initialized;
+    
+    // 简单活动检测（用于优化功耗）
+    int64_t last_activity_time;
+    atomic_bool system_idle;
 };
 
 // 获取私有数据实例
@@ -55,9 +57,10 @@ static struct charging_monitor_data *get_data(void)
         .current_state_atomic = ATOMIC_VAR_INIT(CHARGING_STATE_ERROR),
         .polling_interval_ms = ATOMIC_VAR_INIT(POLL_INTERVAL_DEFAULT_MS),
         .polling_active = ATOMIC_VAR_INIT(true),
-        .system_suspended = ATOMIC_VAR_INIT(false),
         .pending_callback_state = ATOMIC_VAR_INIT(CHARGING_STATE_ERROR),
         .initialized = ATOMIC_VAR_INIT(false),
+        .system_idle = ATOMIC_VAR_INIT(false),
+        .last_activity_time = 0,
         .callback = NULL,
         .gpio_dev = NULL,
     };
@@ -86,36 +89,72 @@ static void callback_work_handler(struct k_work *work)
 }
 
 // 智能轮询间隔计算
-static uint32_t calculate_polling_interval(charging_state_t state)
+static uint32_t calculate_polling_interval(charging_state_t state, bool system_idle)
 {
+    uint32_t base_interval;
+    
+    // 根据充电状态决定基础间隔
     switch (state) {
     case CHARGING_STATE_CHARGING:
-        return POLL_INTERVAL_CHARGING_MS;
+        base_interval = POLL_INTERVAL_CHARGING_MS;
+        break;
     case CHARGING_STATE_FULL:
-        return POLL_INTERVAL_FULL_MS;
+        base_interval = POLL_INTERVAL_FULL_MS;
+        break;
     case CHARGING_STATE_ERROR:
-        return POLL_INTERVAL_ERROR_MS;
+        base_interval = POLL_INTERVAL_ERROR_MS;
+        break;
     default:
-        return POLL_INTERVAL_DEFAULT_MS;
+        base_interval = POLL_INTERVAL_DEFAULT_MS;
     }
+    
+    // 如果系统空闲，延长检查间隔（节省功耗）
+    if (system_idle && state != CHARGING_STATE_CHARGING) {
+        return base_interval * 2; // 空闲时加倍间隔
+    }
+    
+    return base_interval;
+}
+
+// 记录活动时间（可从外部调用以优化功耗）
+void charging_monitor_record_activity(void)
+{
+    struct charging_monitor_data *data = get_data();
+    data->last_activity_time = k_uptime_get();
+    
+    // 如果之前是空闲状态，立即唤醒
+    if (atomic_load(&data->system_idle)) {
+        atomic_store(&data->system_idle, false);
+        LOG_DBG("Activity detected, resuming normal polling");
+    }
+}
+
+// 检查系统是否空闲（简单启发式方法）
+static bool check_system_idle(void)
+{
+    struct charging_monitor_data *data = get_data();
+    int64_t now = k_uptime_get();
+    
+    // 如果超过30秒没有活动，认为系统空闲
+    if ((now - data->last_activity_time) > 30000) {
+        if (!atomic_load(&data->system_idle)) {
+            LOG_DBG("System idle detected, extending polling intervals");
+        }
+        return true;
+    }
+    
+    return false;
 }
 
 // 状态检查工作函数
 static void status_check_work_handler(struct k_work *work)
 {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, status_check_work);
+    struct charging_monitor_data *data = get_data();
     
     // 检查是否已初始化
     if (!atomic_load(&data->initialized)) {
         LOG_WRN("Charging monitor not initialized");
-        return;
-    }
-    
-    // 检查系统是否挂起
-    if (atomic_load(&data->system_suspended)) {
-        LOG_DBG("System suspended, skipping poll");
-        k_work_reschedule(dwork, K_MSEC(atomic_load(&data->polling_interval_ms)));
         return;
     }
     
@@ -124,6 +163,10 @@ static void status_check_work_handler(struct k_work *work)
         LOG_DBG("Polling paused");
         return;
     }
+    
+    // 更新系统空闲状态（用于功耗优化）
+    bool system_idle = check_system_idle();
+    atomic_store(&data->system_idle, system_idle);
     
     // 读取CHRG引脚状态
     int pin_state;
@@ -140,10 +183,11 @@ static void status_check_work_handler(struct k_work *work)
         
         // 原子更新错误状态
         atomic_store(&data->current_state_atomic, CHARGING_STATE_ERROR);
-        atomic_store(&data->polling_interval_ms, POLL_INTERVAL_ERROR_MS);
         
-        // 调度下一次检查（错误状态间隔较长）
-        k_work_reschedule(dwork, K_MSEC(POLL_INTERVAL_ERROR_MS));
+        // 智能调度下一次检查（错误状态间隔较长，空闲时更长）
+        uint32_t interval = calculate_polling_interval(CHARGING_STATE_ERROR, system_idle);
+        atomic_store(&data->polling_interval_ms, interval);
+        k_work_reschedule(dwork, K_MSEC(interval));
         return;
     }
     
@@ -170,40 +214,23 @@ static void status_check_work_handler(struct k_work *work)
         
         // 提交异步回调工作（避免在锁内执行用户代码）
         k_work_submit(&data->callback_work);
-        
-        // 根据新状态更新轮询间隔
-        uint32_t new_interval = calculate_polling_interval(new_state);
-        atomic_store(&data->polling_interval_ms, new_interval);
     }
     
     // 智能调度下一次检查
     if (atomic_load(&data->polling_active)) {
-        uint32_t interval = atomic_load(&data->polling_interval_ms);
+        uint32_t interval = calculate_polling_interval(new_state, system_idle);
+        atomic_store(&data->polling_interval_ms, interval);
+        
+        // 如果系统空闲且不在充电状态，可以进一步延长间隔
+        if (system_idle && new_state != CHARGING_STATE_CHARGING) {
+            // 空闲且充满时检查频率最低
+            interval = POLL_INTERVAL_FULL_MS * 3; // 30秒一次
+            LOG_DBG("System idle and battery full, extending poll interval to %u ms", interval);
+        }
+        
         k_work_reschedule(dwork, K_MSEC(interval));
     }
 }
-
-// ZMK电源状态变化回调（可选）
-#ifdef CONFIG_ZMK_PM_SOFT_OFF
-static void on_pm_state_change(enum zmk_pm_state state)
-{
-    struct charging_monitor_data *data = get_data();
-    
-    switch (state) {
-    case ZMK_PM_STATE_ACTIVE:
-        atomic_store(&data->system_suspended, false);
-        LOG_DBG("System resumed, resuming charging monitor");
-        break;
-    case ZMK_PM_STATE_SUSPENDED:
-    case ZMK_PM_STATE_SOFT_OFF:
-        atomic_store(&data->system_suspended, true);
-        LOG_DBG("System suspended, pausing charging monitor");
-        break;
-    default:
-        break;
-    }
-}
-#endif
 
 // 初始化充电监控器
 int charging_monitor_init(void)
@@ -216,7 +243,7 @@ int charging_monitor_init(void)
         return 0;
     }
     
-    LOG_DBG("Initializing charging monitor with thread safety optimizations");
+    LOG_DBG("Initializing charging monitor with thread safety and power optimizations");
     
     // 初始化互斥锁和自旋锁
     k_mutex_init(&data->callback_mutex);
@@ -241,30 +268,26 @@ int charging_monitor_init(void)
     k_work_init_delayable(&data->status_check_work, status_check_work_handler);
     k_work_init(&data->callback_work, callback_work_handler);
     
+    // 设置初始活动时间
+    data->last_activity_time = k_uptime_get();
+    
     // 读取初始状态
     int initial_state = gpio_pin_get(data->gpio_dev, CHRG_GPIO_PIN);
     if (initial_state >= 0) {
         charging_state_t init_state = (initial_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
         atomic_store(&data->current_state_atomic, init_state);
-        atomic_store(&data->polling_interval_ms, calculate_polling_interval(init_state));
         
-        LOG_INF("Initial charging state: %s", 
-                (init_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL");
+        uint32_t interval = calculate_polling_interval(init_state, false);
+        atomic_store(&data->polling_interval_ms, interval);
+        
+        LOG_INF("Initial charging state: %s (polling: %u ms)", 
+                (init_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL",
+                interval);
     } else {
         LOG_ERR("Failed to read initial CHRG pin state: %d", initial_state);
         atomic_store(&data->current_state_atomic, CHARGING_STATE_ERROR);
         atomic_store(&data->polling_interval_ms, POLL_INTERVAL_ERROR_MS);
     }
-    
-    // 注册电源管理回调（如果可用）
-    #ifdef CONFIG_ZMK_PM_SOFT_OFF
-    static bool pm_callback_registered = false;
-    if (!pm_callback_registered) {
-        zmk_pm_register_callback(on_pm_state_change);
-        pm_callback_registered = true;
-        LOG_DBG("Registered power management callback");
-    }
-    #endif
     
     // 立即执行一次状态检查（无延迟）
     k_work_reschedule(&data->status_check_work, K_NO_WAIT);
@@ -396,8 +419,17 @@ void charging_monitor_resume(void)
     
     atomic_store(&data->polling_active, true);
     
+    // 记录活动时间
+    charging_monitor_record_activity();
+    
     // 立即触发一次状态检查
     k_work_reschedule(&data->status_check_work, K_NO_WAIT);
     
     LOG_DBG("Charging monitor polling resumed");
+}
+
+// 手动触发活动记录（可由外部调用以优化功耗）
+void charging_monitor_notify_activity(void)
+{
+    charging_monitor_record_activity();
 }
