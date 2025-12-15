@@ -12,22 +12,17 @@ static void on_charging_state_changed(enum charging_state new_state)
 {
     switch (new_state) {
     case CHARGING_STATE_CHARGING:
-        LOG_INF("Charging state: CHARGING - Turning backlight ON");
+        LOG_INF("Charging detected - Turning backlight ON");
         zmk_backlight_on();
         break;
         
-    case CHARGING_STATE_DISCHARGING:
-        LOG_INF("Charging state: DISCHARGING - Turning backlight OFF");
-        zmk_backlight_off();
-        break;
-        
     case CHARGING_STATE_FULL:
-        LOG_INF("Charging state: FULL - Turning backlight OFF");
+        LOG_INF("Battery full - Turning backlight OFF");
         zmk_backlight_off();
         break;
         
     case CHARGING_STATE_ERROR:
-        LOG_WRN("Charging state: ERROR - Leaving backlight unchanged");
+        LOG_WRN("Charging monitor error - Leaving backlight unchanged");
         break;
     }
 }
@@ -39,7 +34,7 @@ static void delayed_init_work_handler(struct k_work *work)
     
     int ret;
     
-    LOG_INF("Starting delayed initialization of charging backlight controller");
+    LOG_INF("Initializing charging backlight controller");
     
     // 初始化充电监控器
     ret = charging_monitor_init();
@@ -63,9 +58,9 @@ static int charging_backlight_controller_init(void)
 {
     // 延迟3秒初始化，确保键盘功能先启动
     k_work_init_delayable(&init_work, delayed_init_work_handler);
-    k_work_reschedule(&init_work, K_SECONDS(3));
+    k_work_reschedule(&init_work, K_MSEC(CONFIG_CHARGING_MONITOR_INIT_DELAY_MS));
     
-    LOG_INF("Charging backlight controller scheduled for delayed initialization");
+    LOG_INF("Charging backlight controller scheduled for initialization");
     return 0;
 }
 

@@ -14,3 +14,33 @@ config LED_PWM
     default y
 
 endif # ZMK_BACKLIGHT
+
+menuconfig CHARGING_MONITOR
+	bool "Charging Monitor"
+	default y
+	help
+	  Enable charging state monitoring using TP4056 CHRG pin.
+
+if CHARGING_MONITOR
+
+config CHARGING_MONITOR_POLL_INTERVAL_MS
+	int "Polling interval in milliseconds"
+	default 5000
+	range 1000 60000
+	help
+	  How often to check charging status.
+
+config CHARGING_MONITOR_INIT_DELAY_MS
+	int "Initialization delay in milliseconds"
+	default 3000
+	help
+	  Delay before starting monitoring to ensure system stability.
+
+config CHARGING_MONITOR_LOG_LEVEL
+	int "Log level"
+	default 2
+	range 0 4
+	help
+	  Log level for charging monitor (0=off, 1=error, 2=warning, 3=info, 4=debug).
+
+endif # CHARGING_MONITOR
