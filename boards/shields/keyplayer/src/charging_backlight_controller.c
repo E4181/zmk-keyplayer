@@ -1,5 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/init.h>  // 添加这个头文件
+
 LOG_MODULE_REGISTER(charging_backlight, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/backlight.h>
@@ -64,5 +66,5 @@ static int charging_backlight_controller_init(void)
     return 0;
 }
 
-// 使用 ZMK 中常见的初始化优先级 - 99 是较低的优先级，确保在其他功能之后初始化
+// 使用Zephyr的初始化系统
 SYS_INIT(charging_backlight_controller_init, APPLICATION, 99);
