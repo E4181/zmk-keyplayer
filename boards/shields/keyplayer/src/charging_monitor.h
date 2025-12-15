@@ -8,28 +8,20 @@ extern "C" {
 #endif
 
 // 充电状态枚举
-enum charging_state {
+typedef enum {
     CHARGING_STATE_CHARGING = 0,    // 正在充电 (CHRG低电平)
     CHARGING_STATE_FULL,            // 已充满 (CHRG高电平)
     CHARGING_STATE_ERROR            // 错误状态
-};
+} charging_state_t;
 
 // 充电状态变化回调函数类型
-typedef void (*charging_state_changed_cb_t)(enum charging_state new_state);
+typedef void (*charging_state_changed_cb_t)(charging_state_t new_state);
 
-// 初始化充电监控器
+// API接口
 int charging_monitor_init(void);
-
-// 注册回调函数
 int charging_monitor_register_callback(charging_state_changed_cb_t callback);
-
-// 获取当前充电状态
-enum charging_state charging_monitor_get_state(void);
-
-// 获取充电状态字符串
+charging_state_t charging_monitor_get_state(void);
 const char* charging_monitor_get_state_str(void);
-
-// 检查充电监控器是否已初始化
 bool charging_monitor_is_initialized(void);
 
 #ifdef __cplusplus

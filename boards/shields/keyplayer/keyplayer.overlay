@@ -83,7 +83,6 @@
     charging_monitor {
         compatible = "zmk,charging-monitor";
         chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
-        chrg-active-low;
         status = "okay";
     };
 

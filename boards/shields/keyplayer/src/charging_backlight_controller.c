@@ -10,7 +10,7 @@ LOG_MODULE_REGISTER(charging_backlight, CONFIG_ZMK_LOG_LEVEL);
 static struct k_work_delayable init_work;
 
 // 充电状态变化回调函数
-static void on_charging_state_changed(enum charging_state new_state)
+static void on_charging_state_changed(charging_state_t new_state)
 {
     switch (new_state) {
     case CHARGING_STATE_CHARGING:
@@ -66,5 +66,5 @@ static int charging_backlight_controller_init(void)
     return 0;
 }
 
-// 在应用层初始化
+// Zephyr系统初始化
 SYS_INIT(charging_backlight_controller_init, APPLICATION, 99);
