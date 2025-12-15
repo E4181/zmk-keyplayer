@@ -1,6 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/init.h>  // 添加这个头文件
+#include <zephyr/init.h>
 
 LOG_MODULE_REGISTER(charging_backlight, CONFIG_ZMK_LOG_LEVEL);
 
@@ -66,5 +66,5 @@ static int charging_backlight_controller_init(void)
     return 0;
 }
 
-// 使用Zephyr的初始化系统
+// 在应用层初始化
 SYS_INIT(charging_backlight_controller_init, APPLICATION, 99);
