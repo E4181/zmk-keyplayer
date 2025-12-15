@@ -1,25 +1,15 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/devicetree.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 
 #include "charging_monitor.h"
 
-// 检查是否存在charging_monitor节点
-#if DT_HAS_COMPAT_STATUS_OKAY(zmk_charging_monitor)
-
-// 获取第一个状态为okay的charging_monitor节点
-#define CHARGING_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_charging_monitor)
-
-// 获取GPIO定义
-static const struct gpio_dt_spec chrg_gpio = GPIO_DT_SPEC_GET(CHARGING_NODE, chrg_gpios);
-
-#else
-// 如果没有定义节点，使用硬编码的GPIO（向后兼容）
-static const struct gpio_dt_spec chrg_gpio = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(gpio1), gpios, {0});
-#endif
+// 硬编码GPIO配置 - ZMK常用方式
+#define CHRG_GPIO_DEV DEVICE_DT_GET(DT_NODELABEL(gpio1))
+#define CHRG_GPIO_PIN 9  // P1.09
+#define CHRG_GPIO_FLAGS (GPIO_ACTIVE_LOW | GPIO_PULL_UP)
 
 // 充电监控器私有数据结构
 struct charging_monitor_data {
@@ -28,6 +18,7 @@ struct charging_monitor_data {
     charging_state_changed_cb_t callback;
     bool initialized;
     struct k_mutex state_mutex;
+    const struct device *gpio_dev;
 };
 
 // 获取私有数据实例
@@ -37,6 +28,7 @@ static struct charging_monitor_data *get_data(void)
         .current_state = CHARGING_STATE_ERROR,
         .initialized = false,
         .callback = NULL,
+        .gpio_dev = NULL,
     };
     return &data;
 }
@@ -47,21 +39,13 @@ static void status_check_work_handler(struct k_work *work)
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
     struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, status_check_work);
     
-    if (!data->initialized) {
+    if (!data->initialized || !data->gpio_dev) {
         LOG_WRN("Charging monitor not initialized");
         return;
     }
     
-    // 检查GPIO设备是否就绪
-    if (!gpio_is_ready_dt(&chrg_gpio)) {
-        LOG_ERR("CHRG GPIO device not ready");
-        data->current_state = CHARGING_STATE_ERROR;
-        k_work_reschedule(&data->status_check_work, K_SECONDS(10));
-        return;
-    }
-    
     // 读取CHRG引脚状态
-    int pin_state = gpio_pin_get_dt(&chrg_gpio);
+    int pin_state = gpio_pin_get(data->gpio_dev, CHRG_GPIO_PIN);
     
     if (pin_state < 0) {
         LOG_ERR("Failed to read CHRG pin: %d", pin_state);
@@ -70,9 +54,15 @@ static void status_check_work_handler(struct k_work *work)
         return;
     }
     
-    // TP4056 CHRG引脚逻辑
+    // TP4056 CHRG引脚逻辑:
+    // - 物理低电平 (0): 正在充电 (由于GPIO_ACTIVE_LOW，返回1)
+    // - 物理高电平 (1): 已充满 (由于GPIO_ACTIVE_LOW，返回0)
     charging_state_t new_state;
-    new_state = (pin_state > 0) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
+    
+    // GPIO_ACTIVE_LOW 表示低电平有效，所以：
+    // pin_state == 1 表示引脚有效（正在充电）
+    // pin_state == 0 表示引脚无效（已充满）
+    new_state = (pin_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
     
     // 状态变化检测
     if (new_state != data->current_state) {
@@ -108,21 +98,21 @@ int charging_monitor_init(void)
     
     LOG_DBG("Initializing charging monitor");
     
-    // 检查GPIO设备是否就绪
-    if (!gpio_is_ready_dt(&chrg_gpio)) {
-        LOG_ERR("CHRG GPIO device not ready");
+    // 获取GPIO设备
+    data->gpio_dev = CHRG_GPIO_DEV;
+    if (!device_is_ready(data->gpio_dev)) {
+        LOG_ERR("GPIO1 device not ready");
         return -ENODEV;
     }
     
-    LOG_INF("CHRG GPIO: %s, pin: %d, flags: 0x%x",
-            chrg_gpio.port->name, chrg_gpio.pin, chrg_gpio.dt_flags);
-    
     // 配置CHRG引脚为输入，上拉电阻
-    ret = gpio_pin_configure_dt(&chrg_gpio, GPIO_INPUT | GPIO_PULL_UP);
+    ret = gpio_pin_configure(data->gpio_dev, CHRG_GPIO_PIN, GPIO_INPUT | CHRG_GPIO_FLAGS);
     if (ret < 0) {
         LOG_ERR("Failed to configure CHRG GPIO: %d", ret);
         return ret;
     }
+    
+    LOG_INF("CHRG GPIO configured: GPIO1 pin %d, flags: 0x%x", CHRG_GPIO_PIN, CHRG_GPIO_FLAGS);
     
     // 初始化互斥锁
     k_mutex_init(&data->state_mutex);
@@ -131,9 +121,9 @@ int charging_monitor_init(void)
     k_work_init_delayable(&data->status_check_work, status_check_work_handler);
     
     // 读取初始状态
-    int initial_state = gpio_pin_get_dt(&chrg_gpio);
+    int initial_state = gpio_pin_get(data->gpio_dev, CHRG_GPIO_PIN);
     if (initial_state >= 0) {
-        data->current_state = (initial_state > 0) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
+        data->current_state = (initial_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
         LOG_INF("Initial charging state: %s", 
                 (data->current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL");
     } else {
