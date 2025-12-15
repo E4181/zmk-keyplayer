@@ -80,7 +80,7 @@
         };
     };
     
-    charging_monitor {
+     charging_monitor: charging_monitor {
         compatible = "zmk,charging-monitor";
         chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
         status = "okay";

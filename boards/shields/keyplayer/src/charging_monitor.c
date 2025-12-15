@@ -7,16 +7,19 @@ LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 
 #include "charging_monitor.h"
 
-// 从设备树获取节点定义
-#define CHARGING_NODE DT_NODELABEL(charging_monitor)
+// 检查是否存在charging_monitor节点
+#if DT_HAS_COMPAT_STATUS_OKAY(zmk_charging_monitor)
 
-// 检查节点是否存在
-#if !DT_NODE_HAS_STATUS(CHARGING_NODE, okay)
-#error "Charging monitor node not defined in device tree"
-#endif
+// 获取第一个状态为okay的charging_monitor节点
+#define CHARGING_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_charging_monitor)
 
 // 获取GPIO定义
 static const struct gpio_dt_spec chrg_gpio = GPIO_DT_SPEC_GET(CHARGING_NODE, chrg_gpios);
+
+#else
+// 如果没有定义节点，使用硬编码的GPIO（向后兼容）
+static const struct gpio_dt_spec chrg_gpio = GPIO_DT_SPEC_GET_OR(DT_NODELABEL(gpio1), gpios, {0});
+#endif
 
 // 充电监控器私有数据结构
 struct charging_monitor_data {
@@ -53,7 +56,7 @@ static void status_check_work_handler(struct k_work *work)
     if (!gpio_is_ready_dt(&chrg_gpio)) {
         LOG_ERR("CHRG GPIO device not ready");
         data->current_state = CHARGING_STATE_ERROR;
-        k_work_reschedule(&data->status_check_work, K_SECONDS(10)); // 10秒后重试
+        k_work_reschedule(&data->status_check_work, K_SECONDS(10));
         return;
     }
     
@@ -67,14 +70,8 @@ static void status_check_work_handler(struct k_work *work)
         return;
     }
     
-    // TP4056 CHRG引脚逻辑:
-    // - 引脚有效 (GPIO_ACTIVE_LOW时低电平为有效): 正在充电
-    // - 引脚无效: 已充满
+    // TP4056 CHRG引脚逻辑
     charging_state_t new_state;
-    
-    // gpio_pin_get_dt() 返回的是物理电平，但GPIO驱动会根据GPIO_ACTIVE_LOW标志转换
-    // 对于GPIO_ACTIVE_LOW: 物理低电平返回1 (active)，物理高电平返回0 (inactive)
-    // 对于GPIO_ACTIVE_HIGH: 物理高电平返回1 (active)，物理低电平返回0 (inactive)
     new_state = (pin_state > 0) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
     
     // 状态变化检测
@@ -94,7 +91,7 @@ static void status_check_work_handler(struct k_work *work)
         }
     }
     
-    // 调度下一次检查（5秒）
+    // 调度下一次检查
     k_work_reschedule(&data->status_check_work, K_SECONDS(5));
 }
 
@@ -120,7 +117,7 @@ int charging_monitor_init(void)
     LOG_INF("CHRG GPIO: %s, pin: %d, flags: 0x%x",
             chrg_gpio.port->name, chrg_gpio.pin, chrg_gpio.dt_flags);
     
-    // 配置CHRG引脚为输入，上拉电阻（TP4056 CHRG为开漏输出）
+    // 配置CHRG引脚为输入，上拉电阻
     ret = gpio_pin_configure_dt(&chrg_gpio, GPIO_INPUT | GPIO_PULL_UP);
     if (ret < 0) {
         LOG_ERR("Failed to configure CHRG GPIO: %d", ret);
@@ -144,7 +141,7 @@ int charging_monitor_init(void)
         data->current_state = CHARGING_STATE_ERROR;
     }
     
-    // 延迟3秒启动状态监控（让键盘系统先初始化）
+    // 延迟3秒启动状态监控
     k_work_reschedule(&data->status_check_work, K_SECONDS(3));
     
     data->initialized = true;
@@ -168,7 +165,6 @@ int charging_monitor_register_callback(charging_state_changed_cb_t callback)
         return -EINVAL;
     }
     
-    // 设置回调函数
     data->callback = callback;
     LOG_DBG("Callback registered");
     
