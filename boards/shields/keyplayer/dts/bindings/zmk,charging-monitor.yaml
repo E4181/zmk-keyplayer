@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 
 description: |
-  Charging monitor for ZMK keyboards using TP4056 CHRG pin
+  Charging monitor for ZMK keyboards using TP4056 CHRG pin.
 
 compatible: "zmk,charging-monitor"
 
@@ -11,12 +11,9 @@ properties:
   chrg-gpios:
     type: phandle-array
     required: true
-    description: GPIO pin for TP4056 CHRG status detection
-    
+    description: GPIO pin for TP4056 CHRG status detection.
+
   chrg-active-low:
     type: boolean
     default: true
-    description: Whether the CHRG pin is active low (true for TP4056)
-
-required:
-  - chrg-gpios
+    description: Whether the CHRG pin is active low (true for TP4056).
