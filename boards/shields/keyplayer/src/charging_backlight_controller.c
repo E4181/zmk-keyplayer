@@ -53,32 +53,6 @@ static void delayed_init_work_handler(struct k_work *work)
     LOG_INF("Charging backlight controller initialization completed");
 }
 
-// 延迟初始化工作函数
-static void delayed_init_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-    
-    int ret;
-    
-    LOG_INF("Initializing charging backlight controller");
-    
-    // 初始化充电监控器
-    ret = charging_monitor_init();
-    if (ret != 0) {
-        LOG_ERR("Failed to initialize charging monitor: %d", ret);
-        return;
-    }
-    
-    // 注册回调到充电监控器
-    ret = charging_monitor_register_callback(on_charging_state_changed);
-    if (ret != 0) {
-        LOG_ERR("Failed to register backlight callback: %d", ret);
-        return;
-    }
-    
-    LOG_INF("Charging backlight controller initialization completed");
-}
-
 // 初始化背光控制器
 static int charging_backlight_controller_init(void)
 {
