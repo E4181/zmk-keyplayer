@@ -31,35 +31,8 @@ static void on_charging_state_changed(charging_state_t new_state)
     }
 }
 
-// ZMK活动状态变化回调（优化功耗）
-static int on_activity_state_changed(const zmk_event_t *eh)
-{
-    struct zmk_activity_state_changed *ev = as_zmk_activity_state_changed(eh);
-    
-    if (ev == NULL) {
-        return ZMK_EV_EVENT_BUBBLE;
-    }
-    
-    // 根据活动状态调整充电监控
-    switch (ev->state) {
-    case ZMK_ACTIVITY_ACTIVE:
-        // 用户活跃时恢复正常监控
-        charging_monitor_resume();
-        break;
-        
-    case ZMK_ACTIVITY_IDLE:
-        // 用户空闲时降低监控频率或暂停
-        charging_monitor_set_polling_interval(10000); // 空闲时10秒一次
-        break;
-        
-    case ZMK_ACTIVITY_SLEEP:
-        // 休眠时暂停监控以节省电量
-        charging_monitor_pause();
-        break;
-    }
-    
-    return ZMK_EV_EVENT_BUBBLE;
-}
+// --- 简化：只保留核心功能，移除活动状态监听 ---
+// 注意：ZMK的电源管理回调仍然有效（在charging_monitor.c中已实现）
 
 // 延迟初始化工作函数
 static void delayed_init_work_handler(struct k_work *work)
@@ -68,7 +41,7 @@ static void delayed_init_work_handler(struct k_work *work)
     
     int ret;
     
-    LOG_INF("Initializing charging backlight controller with optimizations");
+    LOG_INF("Initializing charging backlight controller");
     
     // 初始化充电监控器
     ret = charging_monitor_init();
@@ -83,17 +56,6 @@ static void delayed_init_work_handler(struct k_work *work)
         LOG_ERR("Failed to register backlight callback: %d", ret);
         return;
     }
-    
-    // 注册活动状态监听器（如果可用）
-    #ifdef CONFIG_ZMK_ACTIVITY_TRIGGERS
-    static bool activity_listener_registered = false;
-    if (!activity_listener_registered) {
-        ZMK_LISTENER(charging_backlight_activity, on_activity_state_changed);
-        ZMK_SUBSCRIPTION(charging_backlight_activity, zmk_activity_state_changed);
-        activity_listener_registered = true;
-        LOG_DBG("Registered activity state listener");
-    }
-    #endif
     
     LOG_INF("Charging backlight controller initialization completed");
 }
