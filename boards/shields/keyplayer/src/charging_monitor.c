@@ -122,6 +122,29 @@ static void set_current_state(charging_state_t state)
 #endif
 }
 
+// 获取原子变量值（安全转换为int）
+static int get_atomic_value(atomic_t *atomic_var)
+{
+    return (int)atomic_get(atomic_var);
+}
+
+// 获取连续错误计数
+static int get_consecutive_errors_count(void)
+{
+    struct charging_monitor_data *data = get_data();
+    int count;
+    
+#if CONFIG_CHARGING_MONITOR_USE_ATOMIC
+    count = get_atomic_value(&data->consecutive_errors);
+#else
+    k_mutex_lock(&data->data_mutex, K_FOREVER);
+    count = (int)data->consecutive_errors;
+    k_mutex_unlock(&data->data_mutex);
+#endif
+    
+    return count;
+}
+
 // 异步回调工作函数
 static void callback_work_handler(struct k_work *work)
 {
@@ -143,7 +166,7 @@ static void callback_work_handler(struct k_work *work)
 
 // 智能轮询间隔计算（优化版）
 static uint32_t calculate_polling_interval(charging_state_t state, bool system_idle, 
-                                          uint8_t consecutive_errors)
+                                          int consecutive_errors)
 {
     uint32_t base_interval;
     
@@ -176,6 +199,7 @@ static uint32_t calculate_polling_interval(charging_state_t state, bool system_i
 static void record_error(charging_error_t error, int ret_code)
 {
     struct charging_monitor_data *data = get_data();
+    int consecutive_errors;
     
     k_mutex_lock(&data->data_mutex, K_FOREVER);
     
@@ -183,18 +207,30 @@ static void record_error(charging_error_t error, int ret_code)
     data->last_error_time = k_uptime_get();
     data->total_errors++;
     
-    if (data->consecutive_errors < MAX_CONSECUTIVE_ERRORS) {
-        data->consecutive_errors++;
+    // 获取当前连续错误计数
+#if CONFIG_CHARGING_MONITOR_USE_ATOMIC
+    consecutive_errors = get_atomic_value(&data->consecutive_errors);
+#else
+    consecutive_errors = (int)data->consecutive_errors;
+#endif
+    
+    if (consecutive_errors < MAX_CONSECUTIVE_ERRORS) {
+        consecutive_errors++;
+#if CONFIG_CHARGING_MONITOR_USE_ATOMIC
+        atomic_set(&data->consecutive_errors, (atomic_val_t)consecutive_errors);
+#else
+        data->consecutive_errors = (uint8_t)consecutive_errors;
+#endif
     }
     
     // 如果连续错误超过阈值，尝试恢复
-    if (data->consecutive_errors >= MAX_CONSECUTIVE_ERRORS && !data->recovery_in_progress) {
+    if (consecutive_errors >= MAX_CONSECUTIVE_ERRORS && !data->recovery_in_progress) {
         data->recovery_in_progress = true;
-        LOG_WRN("Too many consecutive errors (%d), attempting recovery", 
-                data->consecutive_errors);
         
-        // 在下一个工作周期尝试恢复
         k_mutex_unlock(&data->data_mutex);
+        
+        LOG_WRN("Too many consecutive errors (%d), attempting recovery", 
+                consecutive_errors);
         
         // 设置一个短时间的延迟来尝试恢复
         k_work_reschedule(&data->status_check_work, K_MSEC(1000));
@@ -204,7 +240,7 @@ static void record_error(charging_error_t error, int ret_code)
     k_mutex_unlock(&data->data_mutex);
     
     LOG_ERR("Error %d: code %d, consecutive errors: %d", 
-            error, ret_code, data->consecutive_errors);
+            error, ret_code, consecutive_errors);
 }
 
 // 清除错误计数（成功操作后调用）
@@ -213,9 +249,16 @@ static void clear_errors(void)
     struct charging_monitor_data *data = get_data();
     
     k_mutex_lock(&data->data_mutex, K_FOREVER);
+    
+#if CONFIG_CHARGING_MONITOR_USE_ATOMIC
+    atomic_set(&data->consecutive_errors, 0);
+#else
     data->consecutive_errors = 0;
+#endif
+    
     data->recovery_in_progress = false;
     data->last_successful_read = k_uptime_get();
+    
     k_mutex_unlock(&data->data_mutex);
 }
 
@@ -300,9 +343,10 @@ static void status_check_work_handler(struct k_work *work)
             // 恢复成功，继续正常流程
         } else {
             // 恢复失败，延长等待时间
+            int consecutive_errors = get_consecutive_errors_count();
             uint32_t interval = calculate_polling_interval(CHARGING_STATE_ERROR, 
                                                           data->system_idle, 
-                                                          data->consecutive_errors);
+                                                          consecutive_errors);
             k_work_reschedule(dwork, K_MSEC(interval));
             return;
         }
@@ -325,9 +369,10 @@ static void status_check_work_handler(struct k_work *work)
         set_current_state(CHARGING_STATE_ERROR);
         
         // 智能调度下一次检查
+        int consecutive_errors = get_consecutive_errors_count();
         uint32_t interval = calculate_polling_interval(CHARGING_STATE_ERROR, 
                                                       data->system_idle, 
-                                                      data->consecutive_errors);
+                                                      consecutive_errors);
         k_work_reschedule(dwork, K_MSEC(interval));
         return;
     }
@@ -373,9 +418,10 @@ static void status_check_work_handler(struct k_work *work)
     }
     
     // 智能调度下一次检查
+    int consecutive_errors = get_consecutive_errors_count();
     uint32_t interval = calculate_polling_interval(new_state, 
                                                   data->system_idle, 
-                                                  data->consecutive_errors);
+                                                  consecutive_errors);
     k_work_reschedule(dwork, K_MSEC(interval));
 }
 
@@ -589,7 +635,11 @@ int charging_monitor_get_stats(struct charging_monitor_stats *stats)
     
     stats->total_state_changes = data->total_state_changes;
     stats->total_errors = data->total_errors;
+#if CONFIG_CHARGING_MONITOR_USE_ATOMIC
+    stats->consecutive_errors = (uint8_t)get_atomic_value(&data->consecutive_errors);
+#else
     stats->consecutive_errors = data->consecutive_errors;
+#endif
     stats->current_state = data->current_state;
     stats->last_error = data->last_error;
     stats->last_error_time = data->last_error_time;
