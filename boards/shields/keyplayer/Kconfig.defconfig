@@ -19,22 +19,69 @@ menuconfig CHARGING_MONITOR
 	bool "Charging Monitor"
 	default y
 	help
-	  Enable charging state monitoring using TP4056 CHRG pin.
+	  Enable charging state monitoring for battery-powered devices.
 
 if CHARGING_MONITOR
 
-config CHARGING_MONITOR_POLL_INTERVAL_MS
-	int "Polling interval in milliseconds"
-	default 5000
+config CHARGING_MONITOR_GPIO_PORT
+	string "GPIO Port"
+	default "gpio1"
+	help
+	  GPIO port name for CHRG pin (e.g., gpio1).
+
+config CHARGING_MONITOR_GPIO_PIN
+	int "GPIO Pin"
+	default 9
+	help
+	  GPIO pin number for CHRG pin.
+
+config CHARGING_MONITOR_POLL_CHARGING_MS
+	int "Polling interval during charging (ms)"
+	default 2000
+	range 500 10000
+	help
+	  How often to check charging status when battery is charging.
+
+config CHARGING_MONITOR_POLL_FULL_MS
+	int "Polling interval when battery full (ms)"
+	default 10000
 	range 1000 60000
 	help
-	  How often to check charging status.
+	  How often to check charging status when battery is full.
 
-config CHARGING_MONITOR_INIT_DELAY_MS
-	int "Initialization delay in milliseconds"
-	default 3000
+config CHARGING_MONITOR_POLL_ERROR_MS
+	int "Polling interval on error (ms)"
+	default 30000
+	range 5000 120000
 	help
-	  Delay before starting monitoring to ensure system stability.
+	  How often to retry when in error state.
+
+config CHARGING_MONITOR_IDLE_TIMEOUT_MS
+	int "Idle detection timeout (ms)"
+	default 30000
+	range 5000 300000
+	help
+	  Time without activity before considered idle.
+
+config CHARGING_MONITOR_IDLE_MULTIPLIER
+	int "Idle polling multiplier"
+	default 2
+	range 1 10
+	help
+	  Multiply polling interval by this factor when idle.
+
+config CHARGING_MONITOR_MAX_ERRORS
+	int "Maximum consecutive errors"
+	default 5
+	range 1 20
+	help
+	  Number of consecutive errors before attempting recovery.
+
+config CHARGING_MONITOR_USE_ATOMIC
+	bool "Use atomic operations for state"
+	default y
+	help
+	  Use atomic operations for thread-safe state access.
 
 config CHARGING_MONITOR_LOG_LEVEL
 	int "Log level"
