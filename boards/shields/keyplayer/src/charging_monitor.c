@@ -1,7 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include <stdatomic.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 
@@ -24,13 +23,13 @@ LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
 // 最大连续错误次数
 #define MAX_CONSECUTIVE_ERRORS    5
 
-// 充电监控器私有数据结构
+// 防抖时间（毫秒）
+#define DEBOUNCE_TIME_MS          1000     // 状态变化防抖时间
+
+// 充电监控器私有数据结构（简化版）
 struct charging_monitor_data {
-    // 使用原子操作的状态变量
-    atomic_int current_state;
-    
-    // 保护回调函数的互斥锁
-    struct k_mutex callback_mutex;
+    // 状态变量（移除原子操作，使用普通变量）
+    charging_state_t current_state;
     
     // 工作队列
     struct k_work_delayable status_check_work;
@@ -45,20 +44,22 @@ struct charging_monitor_data {
     // 统计和控制标志
     uint32_t consecutive_errors;
     int64_t last_activity_time;
-    bool initialized;
-    bool polling_active;
-    bool system_idle;
+    int64_t last_state_change_time;  // 状态变化时间戳，用于防抖
+    bool initialized : 1;
+    bool polling_active : 1;
+    bool system_idle : 1;
 };
 
 // 获取私有数据实例
 static struct charging_monitor_data *get_data(void)
 {
     static struct charging_monitor_data data = {
-        .current_state = ATOMIC_VAR_INIT(CHARGING_STATE_ERROR),
+        .current_state = CHARGING_STATE_ERROR,
         .callback = NULL,
         .gpio_dev = NULL,
         .consecutive_errors = 0,
         .last_activity_time = 0,
+        .last_state_change_time = 0,
         .initialized = false,
         .polling_active = true,
         .system_idle = false,
@@ -71,24 +72,39 @@ static void callback_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
     struct charging_monitor_data *data = get_data();
-    charging_state_changed_cb_t callback;
-    charging_state_t current_state;
     
-    // 原子读取当前状态
-    current_state = (charging_state_t)atomic_load(&data->current_state);
+    // 直接读取当前状态
+    charging_state_t current_state = data->current_state;
     
-    // 安全获取回调函数指针
-    k_mutex_lock(&data->callback_mutex, K_FOREVER);
-    callback = data->callback;
-    k_mutex_unlock(&data->callback_mutex);
-    
-    // 执行回调（无锁状态）
-    if (callback) {
-        callback(current_state);
+    // 执行回调（不需要锁，回调在初始化后不会改变）
+    if (data->callback) {
+        data->callback(current_state);
     }
 }
 
-// 智能轮询间隔计算
+// 状态变化防抖检查
+static bool should_process_state_change(struct charging_monitor_data *data, 
+                                       charging_state_t new_state)
+{
+    int64_t now = k_uptime_get();
+    
+    // 如果是错误状态，总是处理（需要尽快恢复）
+    if (new_state == CHARGING_STATE_ERROR || 
+        data->current_state == CHARGING_STATE_ERROR) {
+        return true;
+    }
+    
+    // 防抖：相同状态变化至少间隔DEBOUNCE_TIME_MS
+    if (now - data->last_state_change_time < DEBOUNCE_TIME_MS) {
+        LOG_DBG("State change debounced: %d -> %d", 
+                data->current_state, new_state);
+        return false;
+    }
+    
+    return true;
+}
+
+// 智能轮询间隔计算（简化版）
 static uint32_t calculate_polling_interval(charging_state_t state, bool system_idle, 
                                           uint32_t consecutive_errors)
 {
@@ -181,7 +197,7 @@ static void status_check_work_handler(struct k_work *work)
         }
         
         // 设置为错误状态
-        atomic_store(&data->current_state, CHARGING_STATE_ERROR);
+        data->current_state = CHARGING_STATE_ERROR;
         
         // 智能调度下一次检查
         uint32_t interval = calculate_polling_interval(CHARGING_STATE_ERROR, 
@@ -199,22 +215,30 @@ static void status_check_work_handler(struct k_work *work)
     // - pin_state == 0: 引脚无效（已充满）
     charging_state_t new_state = (pin_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
     
-    // 原子获取当前状态进行比较
-    charging_state_t current_state = (charging_state_t)atomic_load(&data->current_state);
+    // 获取当前状态进行比较
+    charging_state_t current_state = data->current_state;
     
-    // 状态变化检测
+    // 状态变化检测（带防抖）
     if (new_state != current_state) {
-        const char *old_state_str = (current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : 
-                                   (current_state == CHARGING_STATE_FULL) ? "FULL" : "ERROR";
-        const char *new_state_str = (new_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL";
-        
-        LOG_INF("Charging state changed: %s -> %s", old_state_str, new_state_str);
-        
-        // 原子更新状态
-        atomic_store(&data->current_state, new_state);
-        
-        // 触发异步回调
-        k_work_submit(&data->callback_work);
+        // 检查是否需要处理这个状态变化（防抖）
+        if (should_process_state_change(data, new_state)) {
+            const char *old_state_str = (current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : 
+                                       (current_state == CHARGING_STATE_FULL) ? "FULL" : "ERROR";
+            const char *new_state_str = (new_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL";
+            
+            LOG_INF("Charging state changed: %s -> %s", old_state_str, new_state_str);
+            
+            // 更新状态和时间戳
+            data->current_state = new_state;
+            data->last_state_change_time = k_uptime_get();
+            
+            // 触发异步回调
+            k_work_submit(&data->callback_work);
+        } else {
+            // 防抖过滤掉的状态变化，但仍然记录调试信息
+            LOG_DBG("State change filtered by debounce: %d -> %d", 
+                    current_state, new_state);
+        }
     }
     
     // 智能调度下一次检查
@@ -233,10 +257,7 @@ int charging_monitor_init(void)
         return 0;
     }
     
-    LOG_DBG("Initializing charging monitor with P1.09 hardcoded");
-    
-    // 初始化互斥锁
-    k_mutex_init(&data->callback_mutex);
+    LOG_DBG("Initializing charging monitor with optimized design");
     
     // 获取GPIO设备 - 硬编码使用GPIO1
     data->gpio_dev = DEVICE_DT_GET(CHARGING_GPIO_PORT);
@@ -270,14 +291,14 @@ int charging_monitor_init(void)
     // 读取初始状态
     int initial_state = gpio_pin_get(data->gpio_dev, CHARGING_GPIO_PIN);
     if (initial_state >= 0) {
-        charging_state_t init_state = (initial_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
-        atomic_store(&data->current_state, init_state);
+        data->current_state = (initial_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
+        data->last_state_change_time = k_uptime_get();
         
         LOG_INF("Initial charging state: %s", 
-                (init_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL");
+                (data->current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL");
     } else {
         LOG_ERR("Failed to read initial CHRG pin state: %d", initial_state);
-        atomic_store(&data->current_state, CHARGING_STATE_ERROR);
+        data->current_state = CHARGING_STATE_ERROR;
     }
     
     // 立即执行一次状态检查（无延迟）
@@ -304,9 +325,8 @@ int charging_monitor_register_callback(charging_state_changed_cb_t callback)
         return -EINVAL;
     }
     
-    k_mutex_lock(&data->callback_mutex, K_FOREVER);
+    // 直接设置回调函数（不需要锁）
     data->callback = callback;
-    k_mutex_unlock(&data->callback_mutex);
     
     LOG_DBG("Callback registered");
     
@@ -325,7 +345,7 @@ charging_state_t charging_monitor_get_state(void)
         return CHARGING_STATE_ERROR;
     }
     
-    return (charging_state_t)atomic_load(&data->current_state);
+    return data->current_state;
 }
 
 // 获取充电状态字符串
