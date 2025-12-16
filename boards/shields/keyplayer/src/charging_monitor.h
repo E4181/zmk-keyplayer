@@ -21,6 +21,9 @@ int charging_monitor_init(void);
 int charging_monitor_register_callback(charging_state_changed_cb_t callback);
 charging_state_t charging_monitor_get_state(void);
 const char* charging_monitor_get_state_str(void);
+const char* charging_monitor_get_mode_str(void);
+uint32_t charging_monitor_get_interrupt_count(void);
+void charging_monitor_force_check(void);
 
 #ifdef __cplusplus
 }
