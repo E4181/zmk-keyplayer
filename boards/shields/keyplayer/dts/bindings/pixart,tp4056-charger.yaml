@@ -1,0 +1,44 @@
+description: |
+  Driver for monitoring TP4056 lithium battery charger status via CHRG pin
+
+compatible: "pixart,tp4056-charger"
+
+include: [base.yaml, gpio.yaml]
+
+properties:
+  chrg-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin connected to TP4056 CHRG pin (active low)
+    
+  poll-interval-ms:
+    type: int
+    required: false
+    default: 1000
+    description: Polling interval in milliseconds (used in polling mode)
+    
+  debounce-ms:
+    type: int
+    required: false
+    default: 50
+    description: Debounce time for state changes
+    
+  label:
+    type: string
+    required: false
+    description: Human readable name for the device
+
+required:
+  - chrg-gpios
+
+additionalProperties: false
+
+examples:
+  - |
+    tp4056_charger {
+        compatible = "pixart,tp4056-charger";
+        chrg-gpios = <&gpio0 9 GPIO_ACTIVE_LOW>;
+        label = "TP4056_CHARGER";
+        poll-interval-ms = <1000>;
+        debounce-ms = <50>;
+    };

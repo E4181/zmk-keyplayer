@@ -80,11 +80,12 @@
         };
     };
 
-    charger_monitor {
-        compatible = "zmk,charger-monitor";
-        chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
-        label = "CHARGER_MONITOR";
-        status = "okay";
-        zephyr,debounce-ms = <50>;
-    };
+tp4056_charger: tp4056_charger {
+    compatible = "pixart,tp4056-charger";
+    chrg-gpios = <&gpio0 9 GPIO_ACTIVE_LOW>; // P1.09
+    label = "TP4056_CHARGER";
+    poll-interval-ms = <1000>; // 仅轮询模式使用
+    debounce-ms = <50>;
+};
+
 };
