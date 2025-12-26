@@ -1,7 +1,7 @@
 include:
    - board: nrfmicro_13
      shield: keyplayer
-     snippet: zmk-usb-logging
+     snippet: studio-rpc-usb-uart zmk-usb-logging
    - board: nrfmicro_13
      shield: settings_reset
 
