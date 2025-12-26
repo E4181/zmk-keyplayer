@@ -17,6 +17,6 @@ endif # ZMK_BACKLIGHT
 
 config ZMK_CHARGE_MONITOR
     bool "Enable TP4056 charge monitoring"
-    default y if DT_HAS_COMPAT_ENABLED(zmk_charge_monitor)
+    default y if DT_HAS_COMPAT_STATUS_OKAY(zmk_charge_monitor)
     help
       Monitors the TP4056 CHRG pin via GPIO interrupt and logs charging state changes.
