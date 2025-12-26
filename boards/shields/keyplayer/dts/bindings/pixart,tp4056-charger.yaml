@@ -3,7 +3,7 @@ description: |
 
 compatible: "pixart,tp4056-charger"
 
-include: [base.yaml, gpio.yaml]
+include: base.yaml
 
 properties:
   chrg-gpios:

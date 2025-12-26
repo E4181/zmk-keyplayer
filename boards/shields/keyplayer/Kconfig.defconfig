@@ -15,6 +15,9 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
+# Copyright (c) 2024 ZMK Project
+# SPDX-License-Identifier: MIT
+
 menuconfig TP4056_CHARGER
 	bool "TP4056 Lithium Battery Charger Monitor"
 	depends on GPIO
@@ -23,6 +26,12 @@ menuconfig TP4056_CHARGER
 	  Enable TP4056 charger status monitoring via CHRG pin.
 
 if TP4056_CHARGER
+
+config TP4056_INIT_PRIORITY
+	int "TP4056 initialization priority"
+	default 90
+	help
+	  Device driver initialization priority.
 
 config TP4056_LOG_LEVEL
 	int "Log level for TP4056 driver"
