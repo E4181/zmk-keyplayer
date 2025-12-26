@@ -15,74 +15,8 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
-# Copyright (c) 2024 ZMK Project
-# SPDX-License-Identifier: MIT
-
-menuconfig TP4056_CHARGER
-	bool "TP4056 Lithium Battery Charger Monitor"
-	depends on GPIO
-	depends on DT_HAS_PIXART_TP4056_CHARGER_ENABLED
-	help
-	  Enable TP4056 charger status monitoring via CHRG pin.
-
-if TP4056_CHARGER
-
-config TP4056_INIT_PRIORITY
-	int "TP4056 initialization priority"
-	default 90
-	help
-	  Device driver initialization priority.
-
-config TP4056_LOG_LEVEL
-	int "Log level for TP4056 driver"
-	default 2
-	range 0 4
-	help
-	  Sets log level for TP4056 charger driver.
-	  0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
-
-config TP4056_POLLING_MODE
-	bool "Use polling mode instead of interrupts"
-	default n
-	help
-	  Use periodic polling instead of GPIO interrupts.
-	  This mode uses more power but is useful if the interrupt
-	  pin is not available or if you want to minimize code size.
-
-config TP4056_POLL_INTERVAL_MS
-	int "Polling interval in milliseconds"
-	default 1000
-	range 100 60000
-	depends on TP4056_POLLING_MODE
-	help
-	  Interval between status checks in polling mode.
-	  Lower values provide faster response but use more power.
-
-config TP4056_DEBOUNCE_MS
-	int "Debounce time in milliseconds"
-	default 50
-	range 0 1000
-	help
-	  Debounce time for GPIO state changes to prevent
-	  bouncing from triggering multiple events.
-
-config TP4056_AUTO_POWER_MANAGEMENT
-	bool "Enable automatic power management"
-	default y
-	depends on PM_DEVICE
-	help
-	  Automatically adjust monitoring frequency based on
-	  system power state to minimize power consumption.
-
-config TP4056_STATISTICS
-	bool "Enable statistics collection"
-	default n
-	help
-	  Collect statistics about charging patterns and state changes.
-	  This adds some memory overhead but can be useful for debugging.
-
-module = TP4056
-module-str = TP4056 Charger Monitor
-source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
-
-endif # TP4056_CHARGER
+config ZMK_CHARGE_MONITOR
+    bool "Enable TP4056 charge monitoring"
+    default y if DT_HAS_COMPAT_ENABLED(zmk_charge_monitor)
+    help
+      Monitors the TP4056 CHRG pin via GPIO interrupt and logs charging state changes.

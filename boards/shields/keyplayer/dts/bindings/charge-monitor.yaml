@@ -1,0 +1,8 @@
+description: TP4056 charge monitor
+compatible: "zmk,charge-monitor"
+include: base.yaml
+properties:
+  chrg-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO for TP4056 CHRG pin
