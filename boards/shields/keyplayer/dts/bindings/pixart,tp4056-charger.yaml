@@ -28,11 +28,6 @@ properties:
     required: false
     description: Human readable name for the device
 
-required:
-  - chrg-gpios
-
-additionalProperties: false
-
 examples:
   - |
     tp4056_charger {
