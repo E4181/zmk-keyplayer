@@ -11,7 +11,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/logging/log.h>
-#include <drivers/charger/tp4056.h>
+#include "tp4056.h"
 #include <zmk/events/activity_state_changed.h>
 
 LOG_MODULE_REGISTER(tp4056, CONFIG_TP4056_LOG_LEVEL);
