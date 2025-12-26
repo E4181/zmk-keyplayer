@@ -27,13 +27,3 @@ properties:
     type: string
     required: false
     description: Human readable name for the device
-
-examples:
-  - |
-    tp4056_charger {
-        compatible = "pixart,tp4056-charger";
-        chrg-gpios = <&gpio0 9 GPIO_ACTIVE_LOW>;
-        label = "TP4056_CHARGER";
-        poll-interval-ms = <1000>;
-        debounce-ms = <50>;
-    };
