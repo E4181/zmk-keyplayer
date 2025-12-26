@@ -1,29 +1,200 @@
+/*
+ * Copyright (c) 2024
+ * SPDX-License-Identifier: MIT
+ */
+
 #pragma once
 
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// 充电状态枚举
-typedef enum {
-    CHARGING_STATE_CHARGING = 0,    // 正在充电 (CHRG低电平)
-    CHARGING_STATE_FULL,            // 已充满 (CHRG高电平)
-    CHARGING_STATE_ERROR            // 错误状态
-} charging_state_t;
+/**
+ * @brief Charger state enumeration
+ */
+enum zmk_charger_state {
+    /** Charger is actively charging */
+    ZMK_CHARGER_STATE_CHARGING,
+    /** Charger is not charging (idle or disconnected) */
+    ZMK_CHARGER_STATE_NOT_CHARGING,
+    /** Charger state is unknown or error */
+    ZMK_CHARGER_STATE_UNKNOWN,
+    /** Charger monitor is disabled */
+    ZMK_CHARGER_STATE_DISABLED
+};
 
-// 充电状态变化回调函数类型
-typedef void (*charging_state_changed_cb_t)(charging_state_t new_state);
+/**
+ * @brief Charger monitor callback function type
+ */
+typedef void (*zmk_charger_state_changed_cb_t)(enum zmk_charger_state state, void *user_data);
 
-// API接口
-int charging_monitor_init(void);
-int charging_monitor_register_callback(charging_state_changed_cb_t callback);
-charging_state_t charging_monitor_get_state(void);
-const char* charging_monitor_get_state_str(void);
-const char* charging_monitor_get_mode_str(void);
-uint32_t charging_monitor_get_interrupt_count(void);
-void charging_monitor_force_check(void);
+/**
+ * @brief Charger monitor API structure
+ */
+struct zmk_charger_monitor_api {
+    /**
+     * @brief Get current charger state
+     * @param dev Charger monitor device
+     * @return Current charger state
+     */
+    enum zmk_charger_state (*get_state)(const struct device *dev);
+    
+    /**
+     * @brief Register state change callback
+     * @param dev Charger monitor device
+     * @param callback Callback function
+     * @param user_data User data passed to callback
+     * @return 0 on success, negative error code on failure
+     */
+    int (*register_callback)(const struct device *dev,
+                             zmk_charger_state_changed_cb_t callback,
+                             void *user_data);
+    
+    /**
+     * @brief Unregister state change callback
+     * @param dev Charger monitor device
+     * @param callback Callback function to unregister
+     * @return 0 on success, negative error code on failure
+     */
+    int (*unregister_callback)(const struct device *dev,
+                               zmk_charger_state_changed_cb_t callback);
+    
+    /**
+     * @brief Enable charger monitor
+     * @param dev Charger monitor device
+     * @return 0 on success, negative error code on failure
+     */
+    int (*enable)(const struct device *dev);
+    
+    /**
+     * @brief Disable charger monitor
+     * @param dev Charger monitor device
+     * @return 0 on success, negative error code on failure
+     */
+    int (*disable)(const struct device *dev);
+    
+    /**
+     * @brief Check if monitor is enabled
+     * @param dev Charger monitor device
+     * @return true if enabled, false otherwise
+     */
+    bool (*is_enabled)(const struct device *dev);
+};
+
+/**
+ * @brief Get current charger state
+ * @param dev Charger monitor device
+ * @return Current charger state
+ */
+static inline enum zmk_charger_state zmk_charger_monitor_get_state(const struct device *dev)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    return api->get_state(dev);
+}
+
+/**
+ * @brief Register state change callback
+ * @param dev Charger monitor device
+ * @param callback Callback function
+ * @param user_data User data passed to callback
+ * @return 0 on success, negative error code on failure
+ */
+static inline int zmk_charger_monitor_register_callback(const struct device *dev,
+                                                        zmk_charger_state_changed_cb_t callback,
+                                                        void *user_data)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    if (api->register_callback == NULL) {
+        return -ENOTSUP;
+    }
+    
+    return api->register_callback(dev, callback, user_data);
+}
+
+/**
+ * @brief Unregister state change callback
+ * @param dev Charger monitor device
+ * @param callback Callback function to unregister
+ * @return 0 on success, negative error code on failure
+ */
+static inline int zmk_charger_monitor_unregister_callback(const struct device *dev,
+                                                          zmk_charger_state_changed_cb_t callback)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    if (api->unregister_callback == NULL) {
+        return -ENOTSUP;
+    }
+    
+    return api->unregister_callback(dev, callback);
+}
+
+/**
+ * @brief Enable charger monitor
+ * @param dev Charger monitor device
+ * @return 0 on success, negative error code on failure
+ */
+static inline int zmk_charger_monitor_enable(const struct device *dev)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    if (api->enable == NULL) {
+        return -ENOTSUP;
+    }
+    
+    return api->enable(dev);
+}
+
+/**
+ * @brief Disable charger monitor
+ * @param dev Charger monitor device
+ * @return 0 on success, negative error code on failure
+ */
+static inline int zmk_charger_monitor_disable(const struct device *dev)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    if (api->disable == NULL) {
+        return -ENOTSUP;
+    }
+    
+    return api->disable(dev);
+}
+
+/**
+ * @brief Check if monitor is enabled
+ * @param dev Charger monitor device
+ * @return true if enabled, false otherwise
+ */
+static inline bool zmk_charger_monitor_is_enabled(const struct device *dev)
+{
+    const struct zmk_charger_monitor_api *api = 
+        (const struct zmk_charger_monitor_api *)dev->api;
+    
+    if (api->is_enabled == NULL) {
+        return false;
+    }
+    
+    return api->is_enabled(dev);
+}
+
+/**
+ * @brief Get charger monitor device from device tree
+ * @param node_id Device tree node identifier
+ * @return Pointer to charger monitor device
+ */
+#define ZMK_CHARGER_MONITOR_DEVICE(node_id) DEVICE_DT_GET(node_id)
 
 #ifdef __cplusplus
 }

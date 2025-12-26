@@ -15,3 +15,57 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
+# SPDX-License-Identifier: MIT
+
+menuconfig ZMK_CHARGER_MONITOR
+	bool "ZMK Charger Monitor"
+	select GPIO
+	help
+	  Enable monitoring of charger status via a GPIO pin.
+
+if ZMK_CHARGER_MONITOR
+
+config ZMK_CHARGER_MONITOR_INIT_PRIORITY
+	int "Charger monitor initialization priority"
+	default 80
+	help
+	  Initialization priority for the charger monitor driver.
+	  Should be lower than keyboard matrix and other critical drivers.
+
+config ZMK_CHARGER_MONITOR_DEBOUNCE_MS
+	int "Debounce time in milliseconds"
+	default 50
+	range 10 500
+	help
+	  Debounce time for charger state changes.
+
+config ZMK_CHARGER_MONITOR_POLLING_INTERVAL_IDLE_MS
+	int "Polling interval in idle mode (milliseconds)"
+	default 1000
+	range 500 10000
+	help
+	  Polling interval when no state changes are detected.
+
+config ZMK_CHARGER_MONITOR_STATE_CHANGE_TIMEOUT_MS
+	int "Timeout to switch to polling mode (milliseconds)"
+	default 5000
+	range 1000 30000
+	help
+	  Time without state changes before switching to polling mode.
+
+config ZMK_CHARGER_MONITOR_LOG_LEVEL
+	int "Log level for charger monitor"
+	range 0 4
+	default 2
+	help
+	  Log level for the charger monitor driver.
+	  (0=off, 1=error, 2=warn, 3=info, 4=debug)
+
+config ZMK_CHARGER_MONITOR_DELAYED_INIT
+	bool "Enable delayed initialization"
+	default y
+	help
+	  Delay initialization until after keyboard matrix is initialized.
+	  This ensures charger monitor doesn't interfere with keyboard scanning.
+
+endif # ZMK_CHARGER_MONITOR

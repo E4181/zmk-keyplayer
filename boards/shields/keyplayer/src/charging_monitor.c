@@ -1,570 +1,512 @@
+/*
+ * Copyright (c) 2024
+ * SPDX-License-Identifier: MIT
+ */
+
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/init.h>
 
-LOG_MODULE_REGISTER(charging_monitor, CONFIG_ZMK_LOG_LEVEL);
+#include <zmk/charger_monitor.h>
 
-#include "charging_monitor.h"
+LOG_MODULE_REGISTER(charger_monitor, CONFIG_ZMK_CHARGER_MONITOR_LOG_LEVEL);
 
-// 硬编码GPIO配置：使用P1.09 (GPIO1 pin 9)
-#define CHARGING_GPIO_PORT      DT_NODELABEL(gpio1)  // GPIO1设备
-#define CHARGING_GPIO_PIN       9                    // P1.09
-#define CHARGING_GPIO_FLAGS     (GPIO_ACTIVE_LOW | GPIO_PULL_UP)  // 低电平有效，上拉
+/* Internal flags */
+#define INTERRUPT_TRIGGERED_BIT 0
+#define MONITOR_ENABLED_BIT 1
+#define INITIALIZED_BIT 2
 
-// 轮询间隔配置（毫秒）- 直接硬编码
-#define POLL_INTERVAL_CHARGING_MS   2000   // 充电中：2秒
-#define POLL_INTERVAL_FULL_MS      10000   // 充满：10秒
-#define POLL_INTERVAL_ERROR_MS     30000   // 错误：30秒
-#define POLL_INTERVAL_INTERRUPT_MS 30000   // 中断模式下的后备轮询间隔
+/* Maximum number of callbacks to limit memory usage */
+#define MAX_CALLBACKS 2
 
-// 空闲检测配置
-#define IDLE_TIMEOUT_MS           30000    // 30秒无活动视为空闲
-#define IDLE_MULTIPLIER           2        // 空闲时轮询间隔乘数
-
-// 最大连续错误次数
-#define MAX_CONSECUTIVE_ERRORS    5
-
-// 防抖时间（毫秒）
-#define DEBOUNCE_TIME_MS          1000     // 状态变化防抖时间
-
-// 中断防抖时间（微秒）- 硬件防抖
-#define INTERRUPT_DEBOUNCE_US     50000    // 50ms中断防抖
-
-// 工作模式枚举
-enum work_mode {
-    MODE_POLLING = 0,     // 纯轮询模式
-    MODE_INTERRUPT,       // 中断模式（主）+轮询（后备）
-    MODE_ERROR            // 错误模式，回退到轮询
-};
-
-// 充电监控器私有数据结构（带中断支持）
-struct charging_monitor_data {
-    // 状态变量
-    charging_state_t current_state;
+/**
+ * @brief Charger monitor device data structure
+ */
+struct zmk_charger_monitor_data {
+    /* GPIO configuration */
+    const struct gpio_dt_spec chrg_gpio;
     
-    // 工作队列
-    struct k_work_delayable status_check_work;
-    struct k_work callback_work;
-    struct k_work interrupt_work;      // 专门处理中断的工作项
-    
-    // GPIO相关
-    const struct device *gpio_dev;
-    struct gpio_callback gpio_cb;      // GPIO回调结构
-    
-    // 回调函数
-    charging_state_changed_cb_t callback;
-    
-    // 统计和控制标志
-    uint32_t consecutive_errors;
-    uint32_t interrupt_count;          // 中断计数
-    int64_t last_activity_time;
+    /* State management */
+    atomic_t flags;
+    enum zmk_charger_state current_state;
+    enum zmk_charger_state last_state;
     int64_t last_state_change_time;
-    int64_t last_interrupt_time;       // 上次中断时间
-    bool initialized : 1;
-    bool polling_active : 1;
-    bool system_idle : 1;
-    bool interrupt_enabled : 1;        // 中断是否启用
-    bool in_interrupt : 1;             // 是否正在处理中断
-    enum work_mode mode;               // 工作模式
+    int64_t last_interrupt_time;
+    
+    /* Callback management */
+    struct {
+        zmk_charger_state_changed_cb_t callback;
+        void *user_data;
+    } callbacks[MAX_CALLBACKS];
+    uint8_t callback_count;
+    
+    /* Work items */
+    struct k_work interrupt_work;
+    struct k_work_delayable debounce_work;
+    struct k_work_delayable idle_poll_work;
+    struct k_work_delayable health_check_work;
+    
+    /* GPIO callback */
+    struct gpio_callback gpio_callback;
+    
+    /* Mutex for thread safety */
+    struct k_mutex mutex;
+    
+    /* Device pointer */
+    const struct device *dev;
 };
 
-// 获取私有数据实例
-static struct charging_monitor_data *get_data(void)
+/**
+ * @brief Read current charger state from GPIO pin
+ * @param data Charger monitor data
+ * @return Current charger state
+ */
+static inline enum zmk_charger_state read_charger_state(struct zmk_charger_monitor_data *data)
 {
-    static struct charging_monitor_data data = {
-        .current_state = CHARGING_STATE_ERROR,
-        .callback = NULL,
-        .gpio_dev = NULL,
-        .consecutive_errors = 0,
-        .interrupt_count = 0,
-        .last_activity_time = 0,
-        .last_state_change_time = 0,
-        .last_interrupt_time = 0,
-        .initialized = false,
-        .polling_active = true,
-        .system_idle = false,
-        .interrupt_enabled = false,
-        .in_interrupt = false,
-        .mode = MODE_POLLING,
-    };
-    return &data;
+    int ret = gpio_pin_get_dt(&data->chrg_gpio);
+    
+    if (ret < 0) {
+        LOG_DBG("Failed to read CHRG pin: %d", ret);
+        return ZMK_CHARGER_STATE_UNKNOWN;
+    }
+    
+    /* TP4056 CHRG pin is active-low: 0 = charging, 1 = not charging */
+    return (ret == 0) ? ZMK_CHARGER_STATE_CHARGING : ZMK_CHARGER_STATE_NOT_CHARGING;
 }
 
-// GPIO中断处理函数（在中断上下文中执行）
-static void gpio_interrupt_handler(const struct device *dev, 
-                                   struct gpio_callback *cb, 
-                                   uint32_t pins)
+/**
+ * @brief Process state change from interrupt or polling
+ * @param work Work item
+ */
+static void process_state_change(struct k_work *work)
 {
-    struct charging_monitor_data *data = CONTAINER_OF(cb, struct charging_monitor_data, gpio_cb);
-    int64_t now = k_uptime_get();
+    struct zmk_charger_monitor_data *data = 
+        CONTAINER_OF(work, struct zmk_charger_monitor_data, interrupt_work);
     
-    // 中断防抖：避免过于频繁的中断
-    if ((now - data->last_interrupt_time) * 1000 < INTERRUPT_DEBOUNCE_US) {
-        LOG_DBG("Interrupt debounced, too frequent");
+    /* Check if monitor is enabled */
+    if (!atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
         return;
     }
     
-    data->last_interrupt_time = now;
-    data->interrupt_count++;
+    /* Try to lock mutex with timeout to avoid blocking */
+    if (k_mutex_lock(&data->mutex, K_MSEC(10)) != 0) {
+        LOG_DBG("Failed to acquire mutex, skipping state check");
+        atomic_clear_bit(&data->flags, INTERRUPT_TRIGGERED_BIT);
+        return;
+    }
     
-    // 记录活动（中断表示可能有状态变化）
-    data->last_activity_time = now;
+    /* Read current state */
+    enum zmk_charger_state new_state = read_charger_state(data);
     
-    // 标记正在处理中断
-    data->in_interrupt = true;
+    /* Update state if changed */
+    if (new_state != data->current_state && new_state != ZMK_CHARGER_STATE_UNKNOWN) {
+        data->last_state = data->current_state;
+        data->current_state = new_state;
+        data->last_state_change_time = k_uptime_get();
+        
+        /* Log state change */
+        LOG_INF("Charger state: %s -> %s",
+                data->last_state == ZMK_CHARGER_STATE_CHARGING ? "CHARGING" : "NOT_CHARGING",
+                data->current_state == ZMK_CHARGER_STATE_CHARGING ? "CHARGING" : "NOT_CHARGING");
+        
+        /* Notify all registered callbacks */
+        for (int i = 0; i < data->callback_count; i++) {
+            if (data->callbacks[i].callback != NULL) {
+                data->callbacks[i].callback(data->current_state, data->callbacks[i].user_data);
+            }
+        }
+    }
     
-    // 提交中断工作项到系统工作队列（非中断上下文）
+    k_mutex_unlock(&data->mutex);
+    atomic_clear_bit(&data->flags, INTERRUPT_TRIGGERED_BIT);
+}
+
+/**
+ * @brief Optimized GPIO interrupt callback
+ * @note Marked with optimize for size to minimize stack usage
+ */
+__attribute__((optimize("-Os")))
+static void gpio_interrupt_callback(const struct device *dev,
+                                    struct gpio_callback *cb,
+                                    uint32_t pins)
+{
+    struct zmk_charger_monitor_data *data = 
+        CONTAINER_OF(cb, struct zmk_charger_monitor_data, gpio_callback);
+    
+    /* Check if monitor is enabled */
+    if (!atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
+        return;
+    }
+    
+    /* Record interrupt time */
+    data->last_interrupt_time = k_uptime_get();
+    
+    /* Set interrupt flag and submit work */
+    atomic_set_bit(&data->flags, INTERRUPT_TRIGGERED_BIT);
     k_work_submit(&data->interrupt_work);
-    
-    LOG_DBG("GPIO interrupt detected, count: %u", data->interrupt_count);
 }
 
-// 中断工作处理函数（在系统工作队列中执行，非中断上下文）
-static void interrupt_work_handler(struct k_work *work)
-{
-    struct charging_monitor_data *data = CONTAINER_OF(work, struct charging_monitor_data, interrupt_work);
-    
-    if (!data->initialized || !data->gpio_dev) {
-        return;
-    }
-    
-    LOG_DBG("Processing interrupt work");
-    
-    // 取消可能正在排队的状态检查工作
-    k_work_cancel_delayable(&data->status_check_work);
-    
-    // 立即执行状态检查
-    k_work_reschedule(&data->status_check_work, K_NO_WAIT);
-    
-    // 清除中断标记
-    data->in_interrupt = false;
-}
-
-// 异步回调工作函数
-static void callback_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-    struct charging_monitor_data *data = get_data();
-    
-    // 直接读取当前状态
-    charging_state_t current_state = data->current_state;
-    
-    // 执行回调
-    if (data->callback) {
-        data->callback(current_state);
-    }
-}
-
-// 状态变化防抖检查
-static bool should_process_state_change(struct charging_monitor_data *data, 
-                                       charging_state_t new_state)
-{
-    int64_t now = k_uptime_get();
-    
-    // 如果是错误状态，总是处理（需要尽快恢复）
-    if (new_state == CHARGING_STATE_ERROR || 
-        data->current_state == CHARGING_STATE_ERROR) {
-        return true;
-    }
-    
-    // 如果是由中断触发的状态检查，放宽防抖要求（中断表示有实际变化）
-    if (data->in_interrupt) {
-        // 中断模式下，防抖时间减半
-        if (now - data->last_state_change_time < DEBOUNCE_TIME_MS / 2) {
-            LOG_DBG("Interrupt-triggered state change debounced");
-            return false;
-        }
-        return true;
-    }
-    
-    // 防抖：相同状态变化至少间隔DEBOUNCE_TIME_MS
-    if (now - data->last_state_change_time < DEBOUNCE_TIME_MS) {
-        LOG_DBG("Polling state change debounced: %d -> %d", 
-                data->current_state, new_state);
-        return false;
-    }
-    
-    return true;
-}
-
-// 智能轮询间隔计算（根据模式调整）
-static uint32_t calculate_polling_interval(struct charging_monitor_data *data, 
-                                          charging_state_t state, bool system_idle)
-{
-    uint32_t base_interval;
-    
-    // 根据工作模式调整基础间隔
-    switch (data->mode) {
-    case MODE_INTERRUPT:
-        // 中断模式下，轮询作为后备，间隔较长
-        base_interval = POLL_INTERVAL_INTERRUPT_MS;
-        break;
-    case MODE_POLLING:
-    case MODE_ERROR:
-    default:
-        // 轮询模式下，根据状态选择间隔
-        switch (state) {
-        case CHARGING_STATE_CHARGING:
-            base_interval = POLL_INTERVAL_CHARGING_MS;
-            break;
-        case CHARGING_STATE_FULL:
-            base_interval = POLL_INTERVAL_FULL_MS;
-            break;
-        case CHARGING_STATE_ERROR:
-            // 错误状态使用退避算法
-            base_interval = POLL_INTERVAL_ERROR_MS * (1 + (data->consecutive_errors / 2));
-            if (base_interval > 120000) base_interval = 120000; // 最大2分钟
-            break;
-        default:
-            base_interval = POLL_INTERVAL_FULL_MS;
-        }
-        break;
-    }
-    
-    // 应用空闲乘数
-    if (system_idle && state != CHARGING_STATE_CHARGING) {
-        base_interval *= IDLE_MULTIPLIER;
-    }
-    
-    return base_interval;
-}
-
-// 记录活动时间
-static void record_activity(void)
-{
-    struct charging_monitor_data *data = get_data();
-    data->last_activity_time = k_uptime_get();
-    
-    // 如果从空闲状态恢复，记录日志
-    if (data->system_idle) {
-        data->system_idle = false;
-        LOG_DBG("Activity detected, exiting idle mode");
-    }
-}
-
-// 检查系统是否空闲
-static bool check_system_idle(void)
-{
-    struct charging_monitor_data *data = get_data();
-    int64_t now = k_uptime_get();
-    bool is_idle = ((now - data->last_activity_time) > IDLE_TIMEOUT_MS);
-    
-    // 只有状态变化时才记录日志
-    if (is_idle != data->system_idle) {
-        data->system_idle = is_idle;
-        LOG_DBG("System %s", is_idle ? "idle" : "active");
-    }
-    
-    return is_idle;
-}
-
-// 尝试启用中断模式
-static bool try_enable_interrupt(struct charging_monitor_data *data)
-{
-    int ret;
-    
-    // 配置GPIO中断（双边沿触发）
-    ret = gpio_pin_interrupt_configure(data->gpio_dev, CHARGING_GPIO_PIN,
-                                      GPIO_INT_EDGE_BOTH);
-    if (ret < 0) {
-        LOG_WRN("Failed to configure GPIO interrupt: %d (falling back to polling)", ret);
-        return false;
-    }
-    
-    // 初始化GPIO回调
-    gpio_init_callback(&data->gpio_cb, gpio_interrupt_handler, BIT(CHARGING_GPIO_PIN));
-    
-    // 添加回调
-    ret = gpio_add_callback(data->gpio_dev, &data->gpio_cb);
-    if (ret < 0) {
-        LOG_WRN("Failed to add GPIO callback: %d (falling back to polling)", ret);
-        gpio_pin_interrupt_configure(data->gpio_dev, CHARGING_GPIO_PIN, GPIO_INT_DISABLE);
-        return false;
-    }
-    
-    data->interrupt_enabled = true;
-    data->mode = MODE_INTERRUPT;
-    LOG_INF("GPIO interrupt enabled for CHRG pin");
-    
-    return true;
-}
-
-// 状态检查工作函数
-static void status_check_work_handler(struct k_work *work)
+/**
+ * @brief Idle polling work handler
+ * @param work Delayed work item
+ */
+static void idle_poll_work_handler(struct k_work *work)
 {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, status_check_work);
+    struct zmk_charger_monitor_data *data = 
+        CONTAINER_OF(dwork, struct zmk_charger_monitor_data, idle_poll_work);
     
-    if (!data->initialized || !data->gpio_dev) {
-        LOG_WRN("Charging monitor not initialized");
-        k_work_reschedule(dwork, K_MSEC(POLL_INTERVAL_ERROR_MS));
+    /* Check if monitor is enabled */
+    if (!atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
         return;
     }
     
-    // 检查轮询是否激活
-    if (!data->polling_active) {
-        LOG_DBG("Polling paused");
-        return;
-    }
+    /* Process state change */
+    process_state_change(&data->interrupt_work);
     
-    // 更新空闲状态
-    bool system_idle = check_system_idle();
+    /* Reschedule if still in polling mode */
+    int64_t now = k_uptime_get();
+    int64_t time_since_change = now - data->last_state_change_time;
     
-    // 读取CHRG引脚状态
-    int pin_state = gpio_pin_get(data->gpio_dev, CHARGING_GPIO_PIN);
-    
-    if (pin_state < 0) {
-        LOG_ERR("Failed to read CHRG pin: %d", pin_state);
-        
-        // 如果中断模式下出现错误，尝试回退到轮询模式
-        if (data->mode == MODE_INTERRUPT) {
-            LOG_WRN("Interrupt mode error, falling back to polling");
-            data->interrupt_enabled = false;
-            data->mode = MODE_POLLING;
-            gpio_pin_interrupt_configure(data->gpio_dev, CHARGING_GPIO_PIN, GPIO_INT_DISABLE);
-        }
-        
-        // 增加连续错误计数
-        if (data->consecutive_errors < MAX_CONSECUTIVE_ERRORS) {
-            data->consecutive_errors++;
-        }
-        
-        // 设置为错误状态
-        data->current_state = CHARGING_STATE_ERROR;
-        
-        // 智能调度下一次检查
-        uint32_t interval = calculate_polling_interval(data, CHARGING_STATE_ERROR, system_idle);
-        k_work_reschedule(dwork, K_MSEC(interval));
-        return;
-    }
-    
-    // 成功读取，清除错误计数
-    data->consecutive_errors = 0;
-    
-    // TP4056 CHRG引脚逻辑：
-    // - pin_state == 1: 引脚有效（正在充电）
-    // - pin_state == 0: 引脚无效（已充满）
-    charging_state_t new_state = (pin_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
-    
-    // 获取当前状态进行比较
-    charging_state_t current_state = data->current_state;
-    
-    // 状态变化检测（带防抖）
-    if (new_state != current_state) {
-        // 检查是否需要处理这个状态变化（防抖）
-        if (should_process_state_change(data, new_state)) {
-            const char *old_state_str = (current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : 
-                                       (current_state == CHARGING_STATE_FULL) ? "FULL" : "ERROR";
-            const char *new_state_str = (new_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL";
-            const char *trigger_str = data->in_interrupt ? "interrupt" : "polling";
-            
-            LOG_INF("Charging state changed (%s): %s -> %s", 
-                    trigger_str, old_state_str, new_state_str);
-            
-            // 更新状态和时间戳
-            data->current_state = new_state;
-            data->last_state_change_time = k_uptime_get();
-            
-            // 触发异步回调
-            k_work_submit(&data->callback_work);
-        } else {
-            // 防抖过滤掉的状态变化，但仍然记录调试信息
-            LOG_DBG("State change filtered by debounce: %d -> %d", 
-                    current_state, new_state);
+    if (time_since_change > CONFIG_ZMK_CHARGER_MONITOR_STATE_CHANGE_TIMEOUT_MS) {
+        /* Still in polling mode, reschedule */
+        k_work_reschedule(dwork, 
+                         K_MSEC(CONFIG_ZMK_CHARGER_MONITOR_POLLING_INTERVAL_IDLE_MS));
+        LOG_DBG("Continuing polling mode");
+    } else {
+        /* Recent state change, switch back to interrupt mode */
+        int ret = gpio_pin_interrupt_configure_dt(&data->chrg_gpio, GPIO_INT_EDGE_BOTH);
+        if (ret == 0) {
+            LOG_DBG("Switched back to interrupt mode");
         }
     }
-    
-    // 智能调度下一次检查
-    uint32_t interval = calculate_polling_interval(data, new_state, system_idle);
-    k_work_reschedule(dwork, K_MSEC(interval));
 }
 
-// 初始化充电监控器
-int charging_monitor_init(void)
+/**
+ * @brief Health check work handler
+ * @param work Delayed work item
+ */
+static void health_check_work_handler(struct k_work *work)
 {
-    struct charging_monitor_data *data = get_data();
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct zmk_charger_monitor_data *data = 
+        CONTAINER_OF(dwork, struct zmk_charger_monitor_data, health_check_work);
+    
+    /* Check if GPIO device is still ready */
+    if (!device_is_ready(data->chrg_gpio.port)) {
+        LOG_WRN("CHRG GPIO device lost, disabling monitor");
+        zmk_charger_monitor_disable(data->dev);
+        return;
+    }
+    
+    /* Reschedule health check */
+    k_work_reschedule(dwork, K_MINUTES(5));
+}
+
+/**
+ * @brief Enable charger monitor
+ * @param data Charger monitor data
+ * @return 0 on success, negative error code on failure
+ */
+static int enable_charger_monitor(struct zmk_charger_monitor_data *data)
+{
     int ret;
     
-    if (data->initialized) {
-        LOG_WRN("Charging monitor already initialized");
-        return 0;
+    if (atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
+        return 0; /* Already enabled */
     }
     
-    LOG_DBG("Initializing charging monitor with interrupt support");
-    
-    // 获取GPIO设备 - 硬编码使用GPIO1
-    data->gpio_dev = DEVICE_DT_GET(CHARGING_GPIO_PORT);
-    if (!data->gpio_dev) {
-        LOG_ERR("Failed to get GPIO1 device");
-        return -ENODEV;
-    }
-    
-    if (!device_is_ready(data->gpio_dev)) {
-        LOG_ERR("GPIO1 device not ready");
-        return -ENODEV;
-    }
-    
-    // 配置CHRG引脚为输入，上拉电阻
-    ret = gpio_pin_configure(data->gpio_dev, CHARGING_GPIO_PIN, GPIO_INPUT | CHARGING_GPIO_FLAGS);
+    /* Configure interrupt */
+    ret = gpio_pin_interrupt_configure_dt(&data->chrg_gpio, GPIO_INT_EDGE_BOTH);
     if (ret < 0) {
-        LOG_ERR("Failed to configure CHRG GPIO: %d", ret);
+        LOG_ERR("Failed to configure interrupt: %d", ret);
         return ret;
     }
     
-    LOG_INF("Charging monitor configured: GPIO1 pin %d (P1.09), flags: 0x%x", 
-            CHARGING_GPIO_PIN, CHARGING_GPIO_FLAGS);
+    atomic_set_bit(&data->flags, MONITOR_ENABLED_BIT);
     
-    // 初始化工作队列
-    k_work_init_delayable(&data->status_check_work, status_check_work_handler);
-    k_work_init(&data->callback_work, callback_work_handler);
-    k_work_init(&data->interrupt_work, interrupt_work_handler);
+    /* Schedule health check */
+    k_work_reschedule(&data->health_check_work, K_MINUTES(5));
     
-    // 尝试启用中断模式
-    bool interrupt_success = try_enable_interrupt(data);
-    
-    if (interrupt_success) {
-        LOG_INF("Charging monitor operating in interrupt mode");
-    } else {
-        LOG_INF("Charging monitor operating in polling mode");
-        data->mode = MODE_POLLING;
-    }
-    
-    // 设置初始活动时间
-    record_activity();
-    
-    // 读取初始状态
-    int initial_state = gpio_pin_get(data->gpio_dev, CHARGING_GPIO_PIN);
-    if (initial_state >= 0) {
-        data->current_state = (initial_state == 1) ? CHARGING_STATE_CHARGING : CHARGING_STATE_FULL;
-        data->last_state_change_time = k_uptime_get();
-        
-        LOG_INF("Initial charging state: %s (mode: %s)", 
-                (data->current_state == CHARGING_STATE_CHARGING) ? "CHARGING" : "FULL",
-                data->interrupt_enabled ? "interrupt" : "polling");
-    } else {
-        LOG_ERR("Failed to read initial CHRG pin state: %d", initial_state);
-        data->current_state = CHARGING_STATE_ERROR;
-        data->mode = MODE_ERROR;
-    }
-    
-    // 根据模式设置初始轮询间隔
-    uint32_t initial_interval;
-    if (data->mode == MODE_INTERRUPT) {
-        initial_interval = POLL_INTERVAL_INTERRUPT_MS;
-    } else {
-        initial_interval = calculate_polling_interval(data, data->current_state, false);
-    }
-    
-    // 开始状态监控
-    k_work_reschedule(&data->status_check_work, K_MSEC(initial_interval));
-    
-    data->initialized = true;
-    LOG_INF("Charging monitor initialized successfully");
+    LOG_DBG("Charger monitor enabled");
     
     return 0;
 }
 
-// 注册回调函数
-int charging_monitor_register_callback(charging_state_changed_cb_t callback)
+/**
+ * @brief Disable charger monitor
+ * @param data Charger monitor data
+ */
+static void disable_charger_monitor(struct zmk_charger_monitor_data *data)
 {
-    struct charging_monitor_data *data = get_data();
-    
-    if (!data->initialized) {
-        LOG_ERR("Charging monitor not initialized");
-        return -ENODEV;
+    if (!atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
+        return; /* Already disabled */
     }
     
-    if (!callback) {
-        LOG_ERR("Callback function is NULL");
+    /* Disable interrupt */
+    gpio_pin_interrupt_configure_dt(&data->chrg_gpio, GPIO_INT_DISABLE);
+    
+    /* Cancel all scheduled work */
+    k_work_cancel(&data->interrupt_work);
+    k_work_cancel_delayable(&data->idle_poll_work);
+    k_work_cancel_delayable(&data->health_check_work);
+    
+    atomic_clear_bit(&data->flags, MONITOR_ENABLED_BIT);
+    
+    LOG_DBG("Charger monitor disabled");
+}
+
+/* API Implementation */
+
+static enum zmk_charger_state get_state(const struct device *dev)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    
+    if (!atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT)) {
+        return ZMK_CHARGER_STATE_DISABLED;
+    }
+    
+    k_mutex_lock(&data->mutex, K_FOREVER);
+    enum zmk_charger_state state = data->current_state;
+    k_mutex_unlock(&data->mutex);
+    
+    return state;
+}
+
+static int register_callback(const struct device *dev,
+                             zmk_charger_state_changed_cb_t callback,
+                             void *user_data)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    int ret = -ENOMEM;
+    
+    if (callback == NULL) {
         return -EINVAL;
     }
     
-    // 直接设置回调函数
-    data->callback = callback;
+    k_mutex_lock(&data->mutex, K_FOREVER);
     
-    LOG_DBG("Callback registered");
+    /* Check for available slot */
+    if (data->callback_count >= MAX_CALLBACKS) {
+        ret = -ENOSPC;
+        goto unlock;
+    }
     
-    // 立即触发一次回调（通过工作队列）
-    k_work_submit(&data->callback_work);
+    /* Check if already registered */
+    for (int i = 0; i < data->callback_count; i++) {
+        if (data->callbacks[i].callback == callback && 
+            data->callbacks[i].user_data == user_data) {
+            ret = -EALREADY;
+            goto unlock;
+        }
+    }
+    
+    /* Register callback */
+    data->callbacks[data->callback_count].callback = callback;
+    data->callbacks[data->callback_count].user_data = user_data;
+    data->callback_count++;
+    
+    ret = 0;
+    
+unlock:
+    k_mutex_unlock(&data->mutex);
+    return ret;
+}
+
+static int unregister_callback(const struct device *dev,
+                               zmk_charger_state_changed_cb_t callback)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    int ret = -ENOENT;
+    
+    k_mutex_lock(&data->mutex, K_FOREVER);
+    
+    for (int i = 0; i < data->callback_count; i++) {
+        if (data->callbacks[i].callback == callback) {
+            /* Shift remaining callbacks */
+            for (int j = i; j < data->callback_count - 1; j++) {
+                data->callbacks[j] = data->callbacks[j + 1];
+            }
+            data->callback_count--;
+            ret = 0;
+            break;
+        }
+    }
+    
+    k_mutex_unlock(&data->mutex);
+    return ret;
+}
+
+static int enable(const struct device *dev)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    return enable_charger_monitor(data);
+}
+
+static int disable(const struct device *dev)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    disable_charger_monitor(data);
+    return 0;
+}
+
+static bool is_enabled(const struct device *dev)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    return atomic_test_bit(&data->flags, MONITOR_ENABLED_BIT);
+}
+
+/**
+ * @brief Charger monitor API structure
+ */
+static const struct zmk_charger_monitor_api charger_monitor_api = {
+    .get_state = get_state,
+    .register_callback = register_callback,
+    .unregister_callback = unregister_callback,
+    .enable = enable,
+    .disable = disable,
+    .is_enabled = is_enabled,
+};
+
+#ifdef CONFIG_PM_DEVICE
+/**
+ * @brief Power management action handler
+ */
+static int charger_monitor_pm_action(const struct device *dev,
+                                     enum pm_device_action action)
+{
+    switch (action) {
+    case PM_DEVICE_ACTION_SUSPEND:
+        return disable(dev);
+    case PM_DEVICE_ACTION_RESUME:
+        return enable(dev);
+    default:
+        return -ENOTSUP;
+    }
+}
+#endif /* CONFIG_PM_DEVICE */
+
+/**
+ * @brief Delayed initialization function
+ */
+static void delayed_init_work_handler(struct k_work *work)
+{
+    struct zmk_charger_monitor_data *data = 
+        CONTAINER_OF(work, struct zmk_charger_monitor_data, interrupt_work);
+    const struct device *dev = data->dev;
+    
+    LOG_DBG("Starting delayed charger monitor initialization");
+    
+    /* Wait a bit to ensure keyboard matrix is initialized */
+    k_sleep(K_MSEC(100));
+    
+    /* Check GPIO device */
+    if (!device_is_ready(data->chrg_gpio.port)) {
+        LOG_WRN("CHRG GPIO not ready, charger monitor will remain disabled");
+        data->current_state = ZMK_CHARGER_STATE_DISABLED;
+        atomic_set_bit(&data->flags, INITIALIZED_BIT);
+        return;
+    }
+    
+    /* Configure GPIO pin as input */
+    int ret = gpio_pin_configure_dt(&data->chrg_gpio, GPIO_INPUT);
+    if (ret < 0) {
+        LOG_WRN("Failed to configure CHRG pin (%d), charger monitor disabled", ret);
+        data->current_state = ZMK_CHARGER_STATE_DISABLED;
+        atomic_set_bit(&data->flags, INITIALIZED_BIT);
+        return;
+    }
+    
+    LOG_INF("CHRG pin: %s pin %d", 
+            data->chrg_gpio.port->name, data->chrg_gpio.pin);
+    
+    /* Initialize work items */
+    k_work_init(&data->interrupt_work, process_state_change);
+    k_work_init_delayable(&data->idle_poll_work, idle_poll_work_handler);
+    k_work_init_delayable(&data->health_check_work, health_check_work_handler);
+    
+    /* Initialize GPIO callback */
+    gpio_init_callback(&data->gpio_callback, gpio_interrupt_callback,
+                       BIT(data->chrg_gpio.pin));
+    
+    /* Add GPIO callback */
+    ret = gpio_add_callback_dt(&data->chrg_gpio, &data->gpio_callback);
+    if (ret < 0) {
+        LOG_WRN("Failed to add GPIO callback (%d), charger monitor disabled", ret);
+        data->current_state = ZMK_CHARGER_STATE_DISABLED;
+        atomic_set_bit(&data->flags, INITIALIZED_BIT);
+        return;
+    }
+    
+    /* Read initial state */
+    data->current_state = read_charger_state(data);
+    data->last_state = data->current_state;
+    data->last_state_change_time = k_uptime_get();
+    data->last_interrupt_time = k_uptime_get();
+    
+    /* Enable monitor */
+    ret = enable_charger_monitor(data);
+    if (ret < 0) {
+        LOG_WRN("Failed to enable charger monitor on init");
+        data->current_state = ZMK_CHARGER_STATE_DISABLED;
+    }
+    
+    atomic_set_bit(&data->flags, INITIALIZED_BIT);
+    
+    LOG_INF("Charger monitor ready (state: %s)",
+            data->current_state == ZMK_CHARGER_STATE_CHARGING ? "CHARGING" :
+            data->current_state == ZMK_CHARGER_STATE_NOT_CHARGING ? "NOT_CHARGING" : "UNKNOWN");
+}
+
+/**
+ * @brief Main initialization function
+ */
+static int zmk_charger_monitor_init(const struct device *dev)
+{
+    struct zmk_charger_monitor_data *data = dev->data;
+    
+    LOG_DBG("Initializing charger monitor");
+    
+    /* Store device pointer */
+    data->dev = dev;
+    
+    /* Initialize mutex */
+    k_mutex_init(&data->mutex);
+    
+#ifdef CONFIG_ZMK_CHARGER_MONITOR_DELAYED_INIT
+    /* Schedule delayed initialization */
+    k_work_init(&data->interrupt_work, delayed_init_work_handler);
+    k_work_submit(&data->interrupt_work);
+#else
+    /* Immediate initialization */
+    delayed_init_work_handler(&data->interrupt_work);
+#endif
     
     return 0;
 }
 
-// 获取当前充电状态
-charging_state_t charging_monitor_get_state(void)
-{
-    struct charging_monitor_data *data = get_data();
-    
-    if (!data->initialized) {
-        return CHARGING_STATE_ERROR;
-    }
-    
-    return data->current_state;
-}
+/**
+ * @brief Define charger monitor device instance
+ */
+#define ZMK_CHARGER_MONITOR_DEFINE(inst)                                         \
+    static struct zmk_charger_monitor_data charger_monitor_data_##inst = {       \
+        .chrg_gpio = GPIO_DT_SPEC_INST_GET(inst, chrg_gpios),                   \
+        .current_state = ZMK_CHARGER_STATE_UNKNOWN,                             \
+        .callback_count = 0,                                                    \
+    };                                                                          \
+    PM_DEVICE_DT_INST_DEFINE(inst, charger_monitor_pm_action);                  \
+    DEVICE_DT_INST_DEFINE(inst,                                                 \
+                          zmk_charger_monitor_init,                             \
+                          PM_DEVICE_DT_INST_GET(inst),                          \
+                          &charger_monitor_data_##inst,                         \
+                          NULL,                                                 \
+                          POST_KERNEL,                                          \
+                          CONFIG_ZMK_CHARGER_MONITOR_INIT_PRIORITY,             \
+                          &charger_monitor_api);
 
-// 获取充电状态字符串
-const char* charging_monitor_get_state_str(void)
-{
-    charging_state_t state = charging_monitor_get_state();
-    
-    switch (state) {
-    case CHARGING_STATE_CHARGING:
-        return "CHARGING";
-    case CHARGING_STATE_FULL:
-        return "FULL";
-    case CHARGING_STATE_ERROR:
-        return "ERROR";
-    default:
-        return "UNKNOWN";
-    }
-}
-
-// 获取当前工作模式
-const char* charging_monitor_get_mode_str(void)
-{
-    struct charging_monitor_data *data = get_data();
-    
-    if (!data->initialized) {
-        return "UNINITIALIZED";
-    }
-    
-    switch (data->mode) {
-    case MODE_POLLING:
-        return "POLLING";
-    case MODE_INTERRUPT:
-        return "INTERRUPT";
-    case MODE_ERROR:
-        return "ERROR";
-    default:
-        return "UNKNOWN";
-    }
-}
-
-// 获取中断统计
-uint32_t charging_monitor_get_interrupt_count(void)
-{
-    struct charging_monitor_data *data = get_data();
-    
-    if (!data->initialized) {
-        return 0;
-    }
-    
-    return data->interrupt_count;
-}
-
-// 手动触发状态检查
-void charging_monitor_force_check(void)
-{
-    struct charging_monitor_data *data = get_data();
-    
-    if (!data->initialized || !data->polling_active) {
-        return;
-    }
-    
-    LOG_DBG("Manual state check triggered");
-    record_activity();
-    
-    // 取消当前可能正在排队的工作，立即触发新的检查
-    k_work_cancel_delayable(&data->status_check_work);
-    k_work_reschedule(&data->status_check_work, K_NO_WAIT);
-}
+/* Instantiate all defined charger monitor devices */
+DT_INST_FOREACH_STATUS_OKAY(ZMK_CHARGER_MONITOR_DEFINE)
