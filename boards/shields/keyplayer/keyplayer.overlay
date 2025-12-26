@@ -22,7 +22,7 @@
     vbatt: vbatt {
         compatible = "zmk,battery-voltage-divider";
         label = "VBATT";
-        io-channels = <&adc 2>; // 根据实际ADC通道调整
+        io-channels = <&adc 2>;
         output-ohms = <2000000>;
         full-ohms = <(2000000 + 806000)>;
     };
