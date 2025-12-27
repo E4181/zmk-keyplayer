@@ -32,62 +32,53 @@ struct layer_led_config {
 struct layer_led_data {
     bool is_blinking;
     uint8_t blink_counter;
-    bool led_state;
     struct k_timer blink_timer;
-    struct k_work_delayable blink_work;
+    struct k_work blink_work;
 };
 
 // 全局设备实例指针数组
 #define GET_DEV(inst) DEVICE_DT_INST_GET(inst),
 static const struct device *devs[] = {DT_INST_FOREACH_STATUS_OKAY(GET_DEV)};
 
-// 工作队列处理函数 - 控制LED状态
+// 定时器回调函数
+static void blink_timer_handler(struct k_timer *timer) {
+    struct layer_led_data *data = CONTAINER_OF(timer, struct layer_led_data, blink_timer);
+    k_work_submit(&data->blink_work);
+}
+
+// 工作队列处理函数 - 执行一次完整的闪烁
 static void blink_work_handler(struct k_work *work) {
-    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    struct layer_led_data *data = CONTAINER_OF(dwork, struct layer_led_data, blink_work);
+    struct layer_led_data *data = CONTAINER_OF(work, struct layer_led_data, blink_work);
     
     if (!data->is_blinking) {
         return;
     }
     
-    // 切换LED状态
     for (int i = 0; i < ARRAY_SIZE(devs); i++) {
         const struct device *dev = devs[i];
         if (dev->data == data) {
             const struct layer_led_config *config = dev->config;
             
-            data->led_state = !data->led_state;
-            gpio_pin_set_dt(&config->led_gpio, data->led_state ? 1 : 0);
+            // 一次完整的闪烁：亮 → 灭
+            gpio_pin_set_dt(&config->led_gpio, 1);  // 点亮LED
+            k_sleep(K_MSEC(config->on_duration_ms));
+            gpio_pin_set_dt(&config->led_gpio, 0);  // 熄灭LED
             
-            // 如果LED刚关闭，增加计数器
-            if (!data->led_state) {
-                data->blink_counter++;
-                LOG_DBG("Blink counter: %d/%d", data->blink_counter, config->blink_count);
-                
-                if (data->blink_counter >= config->blink_count) {
-                    // 闪烁完成，停止定时器
-                    data->is_blinking = false;
-                    k_timer_stop(&data->blink_timer);
-                    LOG_DBG("Blinking completed");
-                    return;
-                }
+            data->blink_counter++;
+            LOG_DBG("Blink counter: %d/%d", data->blink_counter, config->blink_count);
+            
+            if (data->blink_counter < config->blink_count) {
+                // 等待下一次闪烁
+                uint32_t delay = config->blink_period_ms - config->on_duration_ms;
+                k_timer_start(&data->blink_timer, K_MSEC(delay), K_NO_WAIT);
+            } else {
+                // 闪烁完成
+                data->is_blinking = false;
+                LOG_DBG("Blinking completed");
             }
-            
-            // 设置下一次状态切换的时间
-            uint32_t delay = data->led_state ? 
-                config->on_duration_ms : 
-                (config->blink_period_ms - config->on_duration_ms);
-            
-            k_work_schedule(dwork, K_MSEC(delay));
             break;
         }
     }
-}
-
-// 定时器回调函数
-static void blink_timer_handler(struct k_timer *timer) {
-    struct layer_led_data *data = CONTAINER_OF(timer, struct layer_led_data, blink_timer);
-    k_work_schedule(&data->blink_work, K_NO_WAIT);
 }
 
 // 开始闪烁序列
@@ -98,18 +89,15 @@ static void start_blinking(const struct device *dev) {
     if (data->is_blinking) {
         // 如果已经在闪烁，先停止
         k_timer_stop(&data->blink_timer);
-        k_work_cancel_delayable(&data->blink_work);
+        k_work_cancel(&data->blink_work);
+        gpio_pin_set_dt(&config->led_gpio, 0);  // 确保LED关闭
     }
     
     data->is_blinking = true;
     data->blink_counter = 0;
-    data->led_state = true; // 从亮开始
     
-    // 确保LED初始状态为关闭
-    gpio_pin_set_dt(&config->led_gpio, 0);
-    
-    // 启动第一次闪烁
-    k_work_schedule(&data->blink_work, K_NO_WAIT);
+    // 立即开始第一次闪烁
+    k_work_submit(&data->blink_work);
     
     LOG_DBG("Started blinking for layer %d", config->target_layer);
 }
@@ -163,7 +151,7 @@ static const struct behavior_driver_api behavior_layer_led_driver_api = {
     .binding_released = on_layer_led_binding_released,
     .locality = BEHAVIOR_LOCALITY_GLOBAL,
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
-    .parameter_metadata = NULL, // 暂时不需要复杂参数
+    .parameter_metadata = NULL,
 #endif
 };
 
@@ -172,7 +160,6 @@ static const struct behavior_driver_api behavior_layer_led_driver_api = {
     static struct layer_led_data layer_led_data_##inst = {                     \
         .is_blinking = false,                                                  \
         .blink_counter = 0,                                                    \
-        .led_state = false,                                                    \
     };                                                                         \
     static const struct layer_led_config layer_led_config_##inst = {           \
         .led_gpio = GPIO_DT_SPEC_INST_GET(inst, led_gpios),                    \
@@ -202,16 +189,16 @@ static const struct behavior_driver_api behavior_layer_led_driver_api = {
                                                                                \
         /* 初始化定时器和工作队列 */                                           \
         k_timer_init(&data->blink_timer, blink_timer_handler, NULL);           \
-        k_work_init_delayable(&data->blink_work, blink_work_handler);          \
+        k_work_init(&data->blink_work, blink_work_handler);                    \
                                                                                \
         LOG_DBG("Layer LED indicator initialized for layer %d",                \
                 config->target_layer);                                         \
         return 0;                                                              \
     }                                                                          \
     BEHAVIOR_DT_INST_DEFINE(inst, layer_led_init_##inst, NULL,                 \
-                        &layer_led_data_##inst, &layer_led_config_##inst,    \
-                        POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,    \
-                        &behavior_layer_led_driver_api);
+                          &layer_led_data_##inst, &layer_led_config_##inst,    \
+                          POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,    \
+                          &behavior_layer_led_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(LAYER_LED_INDICATOR_INST)
 
