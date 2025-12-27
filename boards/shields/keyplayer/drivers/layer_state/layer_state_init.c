@@ -6,7 +6,7 @@
 
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
-#include <zmk/features/layer_state_manager.h>
+#include "layer_state_manager.h"
 
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
 #include "led_controller.h"
