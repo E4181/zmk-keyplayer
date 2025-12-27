@@ -1,0 +1,44 @@
+# Copyright (c) 2024
+# SPDX-License-Identifier: MIT
+
+description: Layer LED indicator behavior
+
+compatible: "zmk,behavior-layer-led-indicator"
+
+include: behavior-metadata.yaml
+
+properties:
+  led-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin for LED control
+    
+  target-layer:
+    type: int
+    required: true
+    description: Layer number that triggers LED blinking
+    
+  blink-count:
+    type: int
+    required: false
+    default: 5
+    description: Number of times to blink
+    
+  blink-period-ms:
+    type: int
+    required: false
+    default: 1000
+    description: Period of one blink cycle (on+off) in milliseconds
+    
+  on-duration-ms:
+    type: int
+    required: false
+    default: 100
+    description: LED on duration in milliseconds
+    
+  "#binding-cells":
+    type: int
+    required: true
+    const: 0
+
+binding-cells: []

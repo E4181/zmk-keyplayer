@@ -69,57 +69,9 @@ menuconfig ZMK_LAYER_STATE_MANAGER
     help
       Enable layer state manager for monitoring layer changes.
 
-if ZMK_LAYER_STATE_MANAGER
 
-config LAYER_STATE_MAX_CALLBACKS
-    int "Maximum number of callbacks"
-    default 5
-    range 1 20
-    help
-      Maximum number of callback functions that can be registered.
-
-config LAYER_STATE_DEBUG_LOG
-    bool "Enable debug logging"
+config ZMK_BEHAVIOR_LAYER_LED_INDICATOR
+    bool "Enable layer LED indicator behavior"
     default y
     help
-      Enable debug logging for layer state changes.
-
-config LAYER_STATE_LOG_LEVEL
-    int "Log level for layer state"
-    default 3
-    range 0 4
-    help
-      Sets log level for layer state manager.
-      0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
-
-config LAYER_STATE_LED_INDICATOR
-    bool "Enable LED indicator for layer changes"
-    default y
-    help
-      Enable LED blinking when switching to specific layer.
-
-config LAYER_STATE_DEFAULT_TRIGGER_LAYER
-    int "Default trigger layer for LED"
-    default 2
-    range 0 31
-    depends on LAYER_STATE_LED_INDICATOR
-    help
-      Default layer that triggers LED blinking when device tree is not configured.
-
-config LAYER_STATE_LED_BLINK_COUNT
-    int "LED blink count"
-    default 5
-    range 1 20
-    depends on LAYER_STATE_LED_INDICATOR
-    help
-      Number of times to blink LED when layer is activated.
-
-config LAYER_STATE_LED_BLINK_DURATION_MS
-    int "LED blink duration (ms)"
-    default 500
-    range 100 2000
-    depends on LAYER_STATE_LED_INDICATOR
-    help
-      Duration of each blink in milliseconds.
-
-endif # ZMK_LAYER_STATE_MANAGER
+      Blinks an LED when switching to a specific layer
