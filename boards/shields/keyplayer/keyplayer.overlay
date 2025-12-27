@@ -88,12 +88,11 @@
     //    status = "okay";
     //};
 
-    // LED 指示灯配置
-    led_indicator {
-        compatible = "zmk,led-indicator";
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // 使用 GPIO0 引脚 6
-        trigger-layer = <2>;  // 默认触发层为第2层
-        blink-duration-ms = <500>;  // 每次闪烁持续时间
-        blink-count = <5>;  // 闪烁次数
+    layer_led {
+        compatible = "layer-led";
+        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 对应 gpio1 6
+        trigger-layer = <2>;      // 触发层，默认第2层
+        blink-duration-ms = <500>; // 闪烁间隔500ms
+        blink-count = <5>;        // 闪烁5次
     };
 };

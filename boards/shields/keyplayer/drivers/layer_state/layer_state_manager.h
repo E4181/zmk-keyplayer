@@ -27,28 +27,18 @@ extern "C" {
 typedef void (*layer_state_callback_t)(uint8_t layer, bool state, void *user_data);
 
 /**
- * @brief LED indicator configuration from device tree.
- */
-struct layer_led_config {
-    const struct gpio_dt_spec led_gpio;  /**< LED GPIO specification */
-    uint8_t trigger_layer;               /**< Layer number that triggers blinking */
-    uint32_t blink_duration_ms;          /**< Duration of each blink in milliseconds */
-    uint8_t blink_count;                 /**< Number of blinks */
-    const char *label;                   /**< LED label */
-};
-
-/**
- * @brief LED indicator instance.
+ * @brief LED indicator structure.
  */
 struct led_indicator {
-    struct gpio_dt_spec led;            /**< LED GPIO */
-    uint8_t target_layer;               /**< Target layer for blinking */
-    uint32_t blink_duration_ms;         /**< Blink duration in ms */
+    struct gpio_dt_spec led;            /**< LED GPIO specification */
+    uint8_t target_layer;               /**< Layer number that triggers blinking */
+    uint32_t blink_duration_ms;         /**< Duration of each blink in milliseconds */
     uint8_t blink_count;                /**< Number of blinks */
     uint8_t current_blink;              /**< Current blink count */
     bool is_blinking;                   /**< Whether LED is currently blinking */
     struct k_timer blink_timer;         /**< Timer for blinking */
     struct k_work blink_work;           /**< Work queue item for blinking */
+    bool initialized;                   /**< Whether LED is initialized */
 };
 
 /**
@@ -104,7 +94,7 @@ uint8_t layer_state_get_highest_active(void);
 void layer_state_print_current(void);
 
 /**
- * @brief Initialize LED indicator from device tree.
+ * @brief Initialize LED indicator.
  * 
  * @return int 0 on success, negative error code on failure.
  */

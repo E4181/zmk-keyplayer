@@ -34,17 +34,21 @@ static struct layer_state_manager {
 /**
  * @brief LED indicator instance.
  */
-static struct led_indicator led_indicator;
+static struct led_indicator led_indicator = {
+    .initialized = false,
+    .is_blinking = false,
+    .current_blink = 0
+};
 
 /**
- * @brief Check if LED indicator is configured in device tree.
+ * @brief Check if layer LED is configured in device tree.
  */
-#define LED_INDICATOR_NODE DT_PATH(led_indicator)
+#define LAYER_LED_NODE DT_PATH(layer_led)
 
-#if DT_NODE_EXISTS(LED_INDICATOR_NODE)
-#define LED_INDICATOR_AVAILABLE 1
+#if DT_NODE_EXISTS(LAYER_LED_NODE)
+#define LAYER_LED_AVAILABLE 1
 #else
-#define LED_INDICATOR_AVAILABLE 0
+#define LAYER_LED_AVAILABLE 0
 #endif
 
 /**
@@ -53,8 +57,21 @@ static struct led_indicator led_indicator;
  * @param work Work queue item.
  */
 static void led_blink_work_handler(struct k_work *work) {
-    bool led_state = !gpio_pin_get_dt(&led_indicator.led);
-    int ret = gpio_pin_set_dt(&led_indicator.led, led_state);
+    ARG_UNUSED(work);
+    
+    if (!led_indicator.initialized || !led_indicator.is_blinking) {
+        return;
+    }
+    
+    // Get current LED state and toggle it
+    int current_state = gpio_pin_get_dt(&led_indicator.led);
+    if (current_state < 0) {
+        LOG_ERR("Failed to get LED state: %d", current_state);
+        return;
+    }
+    
+    int new_state = current_state ? 0 : 1;
+    int ret = gpio_pin_set_dt(&led_indicator.led, new_state);
     
     if (ret < 0) {
         LOG_ERR("Failed to set LED state: %d", ret);
@@ -62,10 +79,10 @@ static void led_blink_work_handler(struct k_work *work) {
     }
     
     // If LED was turned off, increment blink count
-    if (!led_state) {
+    if (new_state == 0) {
         led_indicator.current_blink++;
         
-        if (led_indicator.current_blink >= led_indicator.blink_count * 2) {
+        if (led_indicator.current_blink >= led_indicator.blink_count) {
             // Blinking complete
             led_indicator.is_blinking = false;
             led_indicator.current_blink = 0;
@@ -81,38 +98,51 @@ static void led_blink_work_handler(struct k_work *work) {
  * @param timer The timer that expired.
  */
 static void led_blink_timer_handler(struct k_timer *timer) {
+    ARG_UNUSED(timer);
     k_work_submit(&led_indicator.blink_work);
 }
 
 /**
- * @brief Initialize the LED indicator from device tree.
+ * @brief Initialize the LED indicator.
  * 
  * @return int 0 on success, negative error code on failure.
  */
 int layer_state_led_indicator_init(void) {
-#if LED_INDICATOR_AVAILABLE
-    // Initialize LED GPIO from device tree
-    if (!DT_NODE_EXISTS(LED_INDICATOR_NODE)) {
-        LOG_WRN("LED indicator node not found in device tree");
-        return -ENODEV;
-    }
+    int ret = 0;
     
-    // 使用正确的宏来获取 GPIO 规格
-    led_indicator.led = (struct gpio_dt_spec)GPIO_DT_SPEC_GET(LED_INDICATOR_NODE, led_gpios);
-    led_indicator.target_layer = DT_PROP(LED_INDICATOR_NODE, trigger_layer);
-    led_indicator.blink_duration_ms = DT_PROP(LED_INDICATOR_NODE, blink_duration_ms);
-    led_indicator.blink_count = DT_PROP(LED_INDICATOR_NODE, blink_count);
+#if LAYER_LED_AVAILABLE
+    // Initialize from device tree
+    led_indicator.led = GPIO_DT_SPEC_GET(LAYER_LED_NODE, led_gpios);
+    led_indicator.target_layer = DT_PROP(LAYER_LED_NODE, trigger_layer);
+    led_indicator.blink_duration_ms = DT_PROP(LAYER_LED_NODE, blink_duration_ms);
+    led_indicator.blink_count = DT_PROP(LAYER_LED_NODE, blink_count);
     
-    LOG_INF("LED indicator configured:");
-    LOG_INF("  GPIO: port=%p, pin=%d", 
-           led_indicator.led.port, 
-           led_indicator.led.pin);
-    LOG_INF("  Trigger layer: %d", led_indicator.target_layer);
+    LOG_INF("Layer LED configured from device tree:");
+#else
+    // Use default configuration
+    LOG_INF("Layer LED using default configuration:");
+    led_indicator.target_layer = CONFIG_LAYER_STATE_DEFAULT_TRIGGER_LAYER;
+    led_indicator.blink_duration_ms = CONFIG_LAYER_STATE_LED_BLINK_DURATION_MS;
+    led_indicator.blink_count = CONFIG_LAYER_STATE_LED_BLINK_COUNT;
+    
+    // For nRF52840 P1.06 (GPIO1 pin 6)
+    led_indicator.led.port = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+    led_indicator.led.pin = 6;
+    led_indicator.led.dt_flags = GPIO_ACTIVE_HIGH;
+#endif
+    
+    LOG_INF("  Target layer: %d", led_indicator.target_layer);
     LOG_INF("  Blink duration: %d ms", led_indicator.blink_duration_ms);
     LOG_INF("  Blink count: %d", led_indicator.blink_count);
     
-    // Configure GPIO
-    int ret = gpio_pin_configure_dt(&led_indicator.led, GPIO_OUTPUT_INACTIVE);
+    // Check if GPIO port is ready
+    if (!device_is_ready(led_indicator.led.port)) {
+        LOG_ERR("GPIO port not ready");
+        return -ENODEV;
+    }
+    
+    // Configure GPIO pin
+    ret = gpio_pin_configure_dt(&led_indicator.led, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure LED GPIO: %d", ret);
         return ret;
@@ -122,15 +152,10 @@ int layer_state_led_indicator_init(void) {
     k_timer_init(&led_indicator.blink_timer, led_blink_timer_handler, NULL);
     k_work_init(&led_indicator.blink_work, led_blink_work_handler);
     
-    led_indicator.is_blinking = false;
-    led_indicator.current_blink = 0;
+    led_indicator.initialized = true;
+    LOG_INF("Layer LED initialized successfully");
     
-    LOG_INF("LED indicator initialized successfully");
     return 0;
-#else
-    LOG_WRN("LED indicator not configured in device tree");
-    return -ENODEV;
-#endif
 }
 
 /**
@@ -139,8 +164,7 @@ int layer_state_led_indicator_init(void) {
  * @param layer The layer that triggered the blinking.
  */
 void layer_state_led_start_blinking(uint8_t layer) {
-#if LED_INDICATOR_AVAILABLE
-    if (!layer_state_led_is_available()) {
+    if (!led_indicator.initialized) {
         return;
     }
     
@@ -152,34 +176,29 @@ void layer_state_led_start_blinking(uint8_t layer) {
         led_indicator.current_blink = 0;
         led_indicator.is_blinking = true;
         
-        // Start blinking timer (twice the rate for on/off cycles)
+        // Start blinking timer
         k_timer_start(&led_indicator.blink_timer,
                      K_MSEC(led_indicator.blink_duration_ms),
                      K_MSEC(led_indicator.blink_duration_ms));
         
         LOG_INF("LED blinking started for layer %d", layer);
     }
-#endif
 }
 
 /**
  * @brief Stop LED blinking.
  */
 void layer_state_led_stop_blinking(void) {
-#if LED_INDICATOR_AVAILABLE
-    if (led_indicator.is_blinking) {
+    if (led_indicator.initialized && led_indicator.is_blinking) {
         k_timer_stop(&led_indicator.blink_timer);
         led_indicator.is_blinking = false;
         led_indicator.current_blink = 0;
         
         // Ensure LED is off
-        if (gpio_is_ready_dt(&led_indicator.led)) {
-            gpio_pin_set_dt(&led_indicator.led, 0);
-        }
+        gpio_pin_set_dt(&led_indicator.led, 0);
         
         LOG_DBG("LED blinking stopped");
     }
-#endif
 }
 
 /**
@@ -188,11 +207,7 @@ void layer_state_led_stop_blinking(void) {
  * @return true if LED indicator is available and configured.
  */
 bool layer_state_led_is_available(void) {
-#if LED_INDICATOR_AVAILABLE
-    return gpio_is_ready_dt(&led_indicator.led);
-#else
-    return false;
-#endif
+    return led_indicator.initialized;
 }
 
 /**
@@ -201,6 +216,8 @@ bool layer_state_led_is_available(void) {
  * This function is called when layer state changes and handles LED blinking.
  */
 static void led_layer_callback(uint8_t layer, bool state, void *user_data) {
+    ARG_UNUSED(user_data);
+    
     if (state) {
         layer_state_led_start_blinking(layer);
     }
@@ -238,7 +255,7 @@ int layer_state_manager_init(void) {
         LOG_WRN("Failed to initialize LED indicator: %d", ret);
     } else {
         // Register LED callback
-        ret = layer_state_register_callback(led_layer_callback, "LED Indicator");
+        ret = layer_state_register_callback(led_layer_callback, NULL);
         if (ret < 0 && ret != -EALREADY) {
             LOG_WRN("Failed to register LED callback: %d", ret);
         }

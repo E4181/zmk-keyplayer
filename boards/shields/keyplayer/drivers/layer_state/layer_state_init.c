@@ -47,9 +47,9 @@ static int layer_state_init(void) {
     
     // Print LED indicator status
     if (layer_state_led_is_available()) {
-        LOG_INF("LED indicator is configured and ready");
+        LOG_INF("Layer LED indicator is configured and ready");
     } else {
-        LOG_INF("LED indicator is not configured");
+        LOG_INF("Layer LED indicator is not available");
     }
     
     // Print initial state
