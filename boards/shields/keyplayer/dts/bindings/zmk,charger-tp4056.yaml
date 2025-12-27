@@ -1,0 +1,21 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: |
+  Driver for detecting TP4056 charger status via CHRG pin
+
+compatible: "zmk,charger-tp4056"
+
+properties:
+  chrg-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin connected to TP4056 CHRG pin (active low)
+  label:
+    type: string
+    required: false
+  debounce-ms:
+    type: int
+    description: Debounce time in milliseconds for charger status changes
+    required: false
+    default: 50

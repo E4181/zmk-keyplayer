@@ -15,8 +15,33 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
-config ZMK_CHARGE_MONITOR
-    bool "Enable TP4056 charge monitoring"
-    default y if DT_HAS_COMPAT_STATUS_OKAY(zmk_charge_monitor)
+menuconfig ZMK_CHARGER
+    bool "Charger detection support"
+    default y
     help
-      Monitors the TP4056 CHRG pin via GPIO interrupt and logs charging state changes.
+      Enable TP4056 charger detection support
+
+if ZMK_CHARGER
+
+config ZMK_CHARGER_TP4056
+    bool "TP4056 Charger detection"
+    depends on GPIO
+    default y
+    help
+      Enable TP4056 charger detection via CHRG pin
+
+config ZMK_CHARGER_DEBOUNCE_MS
+    int "Debounce time in milliseconds"
+    default 100
+    depends on ZMK_CHARGER_TP4056
+    help
+      Debounce time for charger status changes
+
+config ZMK_CHARGER_LED_INDICATOR
+    bool "LED indicator for charger status"
+    depends on ZMK_CHARGER_TP4056
+    default y
+    help
+      Enable LED indicator for charging status
+
+endif # ZMK_CHARGER
