@@ -5,5 +5,4 @@ target_sources(app PRIVATE
     #drivers/charger/charger_tp4056.c
     drivers/layer_state/layer_state_manager.c
     drivers/layer_state/layer_state_init.c
-    drivers/layer_state/led_controller.c
 )

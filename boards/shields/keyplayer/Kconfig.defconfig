@@ -63,7 +63,6 @@ config ZMK_CHARGER_LED_INDICATOR
 
 endif # ZMK_CHARGER
 
-# Layer State Manager Configuration
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"
     default y
@@ -87,17 +86,32 @@ config LAYER_STATE_DEBUG_LOG
 
 config LAYER_STATE_LOG_LEVEL
     int "Log level for layer state"
-    default 4
+    default 3
     range 0 4
     help
       Sets log level for layer state manager.
       0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
 
-config LAYER_STATE_LED_CONTROL
-    bool "Enable LED control for layer state"
+config LAYER_STATE_LED_INDICATOR
+    bool "Enable LED indicator for layer changes"
     default y
     help
-      Enable LED blinking control for specific layer changes.
-      Configuration is taken from device tree.
+      Enable LED blinking when switching to specific layer.
+
+config LAYER_STATE_LED_BLINK_COUNT
+    int "LED blink count"
+    default 5
+    range 1 20
+    depends on LAYER_STATE_LED_INDICATOR
+    help
+      Number of times to blink LED when layer is activated.
+
+config LAYER_STATE_LED_BLINK_DURATION_MS
+    int "LED blink duration (ms)"
+    default 500
+    range 100 2000
+    depends on LAYER_STATE_LED_INDICATOR
+    help
+      Duration of each blink in milliseconds.
 
 endif # ZMK_LAYER_STATE_MANAGER

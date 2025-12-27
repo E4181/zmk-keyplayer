@@ -10,6 +10,8 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/keymap.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +25,31 @@ extern "C" {
  * @param user_data User-provided data passed during registration.
  */
 typedef void (*layer_state_callback_t)(uint8_t layer, bool state, void *user_data);
+
+/**
+ * @brief LED indicator configuration from device tree.
+ */
+struct layer_led_config {
+    const struct gpio_dt_spec led_gpio;  /**< LED GPIO specification */
+    uint8_t trigger_layer;               /**< Layer number that triggers blinking */
+    uint32_t blink_duration_ms;          /**< Duration of each blink in milliseconds */
+    uint8_t blink_count;                 /**< Number of blinks */
+    const char *label;                   /**< LED label */
+};
+
+/**
+ * @brief LED indicator instance.
+ */
+struct led_indicator {
+    struct gpio_dt_spec led;            /**< LED GPIO */
+    uint8_t target_layer;               /**< Target layer for blinking */
+    uint32_t blink_duration_ms;         /**< Blink duration in ms */
+    uint8_t blink_count;                /**< Number of blinks */
+    uint8_t current_blink;              /**< Current blink count */
+    bool is_blinking;                   /**< Whether LED is currently blinking */
+    struct k_timer blink_timer;         /**< Timer for blinking */
+    struct k_work blink_work;           /**< Work queue item for blinking */
+};
 
 /**
  * @brief Initialize the layer state manager.
@@ -75,6 +102,32 @@ uint8_t layer_state_get_highest_active(void);
  * @brief Print current layer state to logs.
  */
 void layer_state_print_current(void);
+
+/**
+ * @brief Initialize LED indicator from device tree.
+ * 
+ * @return int 0 on success, negative error code on failure.
+ */
+int layer_state_led_indicator_init(void);
+
+/**
+ * @brief Start LED blinking for layer indication.
+ * 
+ * @param layer The layer that triggered the blinking.
+ */
+void layer_state_led_start_blinking(uint8_t layer);
+
+/**
+ * @brief Stop LED blinking.
+ */
+void layer_state_led_stop_blinking(void);
+
+/**
+ * @brief Check if LED indicator is available.
+ * 
+ * @return true if LED indicator is available and configured.
+ */
+bool layer_state_led_is_available(void);
 
 #ifdef __cplusplus
 }
