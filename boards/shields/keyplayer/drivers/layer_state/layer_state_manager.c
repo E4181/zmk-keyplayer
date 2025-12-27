@@ -44,11 +44,10 @@ int layer_state_manager_init(void) {
     
     // Get initial state from ZMK
     manager.current_state = zmk_keymap_layer_state();
-    manager.locked_state = zmk_keymap_layer_locks();
+    manager.locked_state = 0; // 暂时设置为0，等待事件更新
     manager.default_layer = zmk_keymap_layer_default();
     
     LOG_INF("Initial layer state: 0x%08X", manager.current_state);
-    LOG_INF("Initial locked state: 0x%08X", manager.locked_state);
     LOG_INF("Default layer: %d", manager.default_layer);
     
     // Print initial layer states
@@ -221,22 +220,18 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
     // Update state
     if (ev->state) {
         manager.current_state |= BIT(ev->layer);
-        if (ev->locked) {
-            manager.locked_state |= BIT(ev->layer);
-        }
+        // 注意：从事件中可能没有locked信息，暂时不更新locked状态
+        // 如果你需要锁定状态，可以从zmk_keymap_layer_locks()获取
     } else {
         manager.current_state &= ~BIT(ev->layer);
-        if (ev->locked) {
-            manager.locked_state &= ~BIT(ev->layer);
-        }
+        // 同样，不更新locked状态
     }
     
     // Log the change
 #if CONFIG_LAYER_STATE_DEBUG_LOG
-    LOG_DBG("Layer %d %s %s (total active: 0x%08X)", 
+    LOG_DBG("Layer %d %s (total active: 0x%08X)", 
            ev->layer,
            ev->state ? "ACTIVATED" : "DEACTIVATED",
-           ev->locked ? "LOCKED" : "unlocked",
            manager.current_state);
 #endif
 }
@@ -249,7 +244,8 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
 static void layer_state_notify_callbacks(const struct zmk_layer_state_changed *ev) {
     for (int i = 0; i < manager.callback_count; i++) {
         if (manager.callbacks[i].callback) {
-            manager.callbacks[i].callback(ev->layer, ev->state, ev->locked, 
+            // 注意：从事件中可能没有locked信息，暂时传递false
+            manager.callbacks[i].callback(ev->layer, ev->state, false, 
                                           manager.callbacks[i].user_data);
         }
     }
@@ -266,10 +262,9 @@ static int on_layer_state_changed(const zmk_event_t *eh) {
     
     if (ev != NULL) {
         // Log the event
-        LOG_INF("Layer state change: layer=%d, state=%s, locked=%s, timestamp=%lld",
+        LOG_INF("Layer state change: layer=%d, state=%s, timestamp=%lld",
                ev->layer,
                ev->state ? "active" : "inactive",
-               ev->locked ? "yes" : "no",
                ev->timestamp);
         
         // Update internal state
