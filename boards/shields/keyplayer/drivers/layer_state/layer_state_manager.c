@@ -34,22 +34,21 @@ static struct layer_state_manager {
 /**
  * @brief LED indicator instance.
  */
-static struct led_indicator led_indicator = {
+static struct led_indicator {
+    struct gpio_dt_spec led;
+    uint8_t target_layer;
+    uint32_t blink_duration_ms;
+    uint8_t blink_count;
+    uint8_t current_blink;
+    bool is_blinking;
+    struct k_timer blink_timer;
+    struct k_work blink_work;
+    bool initialized;
+} led_indicator = {
     .initialized = false,
     .is_blinking = false,
     .current_blink = 0
 };
-
-/**
- * @brief Check if layer LED is configured in device tree.
- */
-#define LAYER_LED_NODE DT_PATH(layer_led)
-
-#if DT_NODE_EXISTS(LAYER_LED_NODE)
-#define LAYER_LED_AVAILABLE 1
-#else
-#define LAYER_LED_AVAILABLE 0
-#endif
 
 /**
  * @brief Work handler for LED blinking.
@@ -110,26 +109,51 @@ static void led_blink_timer_handler(struct k_timer *timer) {
 int layer_state_led_indicator_init(void) {
     int ret = 0;
     
-#if LAYER_LED_AVAILABLE
-    // Initialize from device tree
-    led_indicator.led = GPIO_DT_SPEC_GET(LAYER_LED_NODE, led_gpios);
-    led_indicator.target_layer = DT_PROP(LAYER_LED_NODE, trigger_layer);
-    led_indicator.blink_duration_ms = DT_PROP(LAYER_LED_NODE, blink_duration_ms);
-    led_indicator.blink_count = DT_PROP(LAYER_LED_NODE, blink_count);
+#if CONFIG_LAYER_STATE_LED_INDICATOR
+    // 尝试从设备树获取配置
+    const struct gpio_dt_spec *led_spec = NULL;
+    uint8_t target_layer = CONFIG_LAYER_STATE_DEFAULT_TRIGGER_LAYER;
+    uint32_t blink_duration = CONFIG_LAYER_STATE_LED_BLINK_DURATION_MS;
+    uint8_t blink_count = CONFIG_LAYER_STATE_LED_BLINK_COUNT;
     
-    LOG_INF("Layer LED configured from device tree:");
-#else
-    // Use default configuration
-    LOG_INF("Layer LED using default configuration:");
-    led_indicator.target_layer = CONFIG_LAYER_STATE_DEFAULT_TRIGGER_LAYER;
-    led_indicator.blink_duration_ms = CONFIG_LAYER_STATE_LED_BLINK_DURATION_MS;
-    led_indicator.blink_count = CONFIG_LAYER_STATE_LED_BLINK_COUNT;
+    // 检查设备树中是否有配置
+    if (DT_NODE_EXISTS(DT_PATH(layer_led))) {
+        // 手动构造 gpio_dt_spec
+        const struct device *port = DEVICE_DT_GET(DT_GPIO_CTLR(DT_PATH(layer_led), led_gpios));
+        if (device_is_ready(port)) {
+            led_indicator.led.port = port;
+            led_indicator.led.pin = DT_GPIO_PIN(DT_PATH(layer_led), led_gpios);
+            led_indicator.led.dt_flags = DT_GPIO_FLAGS(DT_PATH(layer_led), led_gpios);
+            
+            // 从设备树读取配置
+            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), trigger_layer)) {
+                target_layer = DT_PROP(DT_PATH(layer_led), trigger_layer);
+            }
+            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), blink_duration_ms)) {
+                blink_duration = DT_PROP(DT_PATH(layer_led), blink_duration_ms);
+            }
+            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), blink_count)) {
+                blink_count = DT_PROP(DT_PATH(layer_led), blink_count);
+            }
+            
+            LOG_INF("Layer LED configured from device tree");
+        }
+    }
     
-    // For nRF52840 P1.06 (GPIO1 pin 6)
-    led_indicator.led.port = DEVICE_DT_GET(DT_NODELABEL(gpio1));
-    led_indicator.led.pin = 6;
-    led_indicator.led.dt_flags = GPIO_ACTIVE_HIGH;
-#endif
+    // 如果设备树没有配置，使用默认值
+    if (!led_indicator.led.port) {
+        // 使用默认配置：nRF52840 P1.06 (GPIO1 pin 6)
+        led_indicator.led.port = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+        led_indicator.led.pin = 6;
+        led_indicator.led.dt_flags = GPIO_ACTIVE_HIGH;
+        
+        LOG_INF("Layer LED using default configuration (P1.06)");
+    }
+    
+    // 设置其他参数
+    led_indicator.target_layer = target_layer;
+    led_indicator.blink_duration_ms = blink_duration;
+    led_indicator.blink_count = blink_count;
     
     LOG_INF("  Target layer: %d", led_indicator.target_layer);
     LOG_INF("  Blink duration: %d ms", led_indicator.blink_duration_ms);
@@ -156,6 +180,10 @@ int layer_state_led_indicator_init(void) {
     LOG_INF("Layer LED initialized successfully");
     
     return 0;
+#else
+    LOG_INF("Layer LED indicator disabled in configuration");
+    return -ENOTSUP;
+#endif
 }
 
 /**
@@ -170,7 +198,9 @@ void layer_state_led_start_blinking(uint8_t layer) {
     
     if (layer == led_indicator.target_layer) {
         // Stop any existing blinking
-        layer_state_led_stop_blinking();
+        if (led_indicator.is_blinking) {
+            k_timer_stop(&led_indicator.blink_timer);
+        }
         
         // Reset state
         led_indicator.current_blink = 0;

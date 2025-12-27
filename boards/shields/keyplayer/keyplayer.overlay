@@ -88,11 +88,11 @@
     //    status = "okay";
     //};
 
-    layer_led {
-        compatible = "layer-led";
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 对应 gpio1 6
-        trigger-layer = <2>;      // 触发层，默认第2层
-        blink-duration-ms = <500>; // 闪烁间隔500ms
-        blink-count = <5>;        // 闪烁5次
+    layer_led: layer_led {
+        compatible = "gpio-led";
+        gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06
+        trigger-layer = <2>;
+        blink-duration-ms = <500>;
+        blink-count = <5>;
     };
 };
