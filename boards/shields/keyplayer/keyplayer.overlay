@@ -90,7 +90,6 @@
 
     layer_led_indicator {
         compatible = "zmk,behavior-layer-led-indicator";
-        label = "LAYER_LED";
         
         // 使用NRF52840的P1.06引脚
         led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;

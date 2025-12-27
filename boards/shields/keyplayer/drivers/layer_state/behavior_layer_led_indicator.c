@@ -209,9 +209,9 @@ static const struct behavior_driver_api behavior_layer_led_driver_api = {
         return 0;                                                              \
     }                                                                          \
     BEHAVIOR_DT_INST_DEFINE(inst, layer_led_init_##inst, NULL,                 \
-                          &layer_led_data_##inst, &layer_led_config_##inst,    \
-                          POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,    \
-                          &behavior_layer_led_driver_api);
+                        &layer_led_data_##inst, &layer_led_config_##inst,    \
+                        POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,    \
+                        &behavior_layer_led_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(LAYER_LED_INDICATOR_INST)
 
