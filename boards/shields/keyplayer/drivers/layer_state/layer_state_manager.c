@@ -34,17 +34,7 @@ static struct layer_state_manager {
 /**
  * @brief LED indicator instance.
  */
-static struct led_indicator {
-    struct gpio_dt_spec led;
-    uint8_t target_layer;
-    uint32_t blink_duration_ms;
-    uint8_t blink_count;
-    uint8_t current_blink;
-    bool is_blinking;
-    struct k_timer blink_timer;
-    struct k_work blink_work;
-    bool initialized;
-} led_indicator = {
+static struct led_indicator led_indicator = {
     .initialized = false,
     .is_blinking = false,
     .current_blink = 0
@@ -110,69 +100,35 @@ int layer_state_led_indicator_init(void) {
     int ret = 0;
     
 #if CONFIG_LAYER_STATE_LED_INDICATOR
-    // 尝试从设备树获取配置
-    const struct gpio_dt_spec *led_spec = NULL;
-    uint8_t target_layer = CONFIG_LAYER_STATE_DEFAULT_TRIGGER_LAYER;
-    uint32_t blink_duration = CONFIG_LAYER_STATE_LED_BLINK_DURATION_MS;
-    uint8_t blink_count = CONFIG_LAYER_STATE_LED_BLINK_COUNT;
+    // 使用硬编码配置：nRF52840 P1.06 (GPIO1 pin 6)
+    led_indicator.led.port = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+    led_indicator.led.pin = 6;
+    led_indicator.led.dt_flags = GPIO_ACTIVE_HIGH;
     
-    // 检查设备树中是否有配置
-    if (DT_NODE_EXISTS(DT_PATH(layer_led))) {
-        // 手动构造 gpio_dt_spec
-        const struct device *port = DEVICE_DT_GET(DT_GPIO_CTLR(DT_PATH(layer_led), led_gpios));
-        if (device_is_ready(port)) {
-            led_indicator.led.port = port;
-            led_indicator.led.pin = DT_GPIO_PIN(DT_PATH(layer_led), led_gpios);
-            led_indicator.led.dt_flags = DT_GPIO_FLAGS(DT_PATH(layer_led), led_gpios);
-            
-            // 从设备树读取配置
-            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), trigger_layer)) {
-                target_layer = DT_PROP(DT_PATH(layer_led), trigger_layer);
-            }
-            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), blink_duration_ms)) {
-                blink_duration = DT_PROP(DT_PATH(layer_led), blink_duration_ms);
-            }
-            if (DT_NODE_HAS_PROP(DT_PATH(layer_led), blink_count)) {
-                blink_count = DT_PROP(DT_PATH(layer_led), blink_count);
-            }
-            
-            LOG_INF("Layer LED configured from device tree");
-        }
-    }
+    // 使用配置的默认值
+    led_indicator.target_layer = CONFIG_LAYER_STATE_DEFAULT_TRIGGER_LAYER;
+    led_indicator.blink_duration_ms = CONFIG_LAYER_STATE_LED_BLINK_DURATION_MS;
+    led_indicator.blink_count = CONFIG_LAYER_STATE_LED_BLINK_COUNT;
     
-    // 如果设备树没有配置，使用默认值
-    if (!led_indicator.led.port) {
-        // 使用默认配置：nRF52840 P1.06 (GPIO1 pin 6)
-        led_indicator.led.port = DEVICE_DT_GET(DT_NODELABEL(gpio1));
-        led_indicator.led.pin = 6;
-        led_indicator.led.dt_flags = GPIO_ACTIVE_HIGH;
-        
-        LOG_INF("Layer LED using default configuration (P1.06)");
-    }
-    
-    // 设置其他参数
-    led_indicator.target_layer = target_layer;
-    led_indicator.blink_duration_ms = blink_duration;
-    led_indicator.blink_count = blink_count;
-    
+    LOG_INF("Layer LED configured for nRF52840 P1.06");
     LOG_INF("  Target layer: %d", led_indicator.target_layer);
     LOG_INF("  Blink duration: %d ms", led_indicator.blink_duration_ms);
     LOG_INF("  Blink count: %d", led_indicator.blink_count);
     
-    // Check if GPIO port is ready
+    // 检查GPIO端口
     if (!device_is_ready(led_indicator.led.port)) {
-        LOG_ERR("GPIO port not ready");
+        LOG_ERR("GPIO1 port not ready");
         return -ENODEV;
     }
     
-    // Configure GPIO pin
+    // 配置GPIO引脚
     ret = gpio_pin_configure_dt(&led_indicator.led, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure LED GPIO: %d", ret);
         return ret;
     }
     
-    // Initialize timer and work queue
+    // 初始化定时器和工作队列
     k_timer_init(&led_indicator.blink_timer, led_blink_timer_handler, NULL);
     k_work_init(&led_indicator.blink_work, led_blink_work_handler);
     
