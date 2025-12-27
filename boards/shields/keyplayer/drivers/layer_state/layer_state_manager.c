@@ -196,9 +196,11 @@ void layer_state_print_current(void) {
  */
 static void layer_state_control_led(uint8_t layer, bool state) {
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+    LOG_INF("LED Control: layer=%d, state=%s", layer, state ? "active" : "inactive");
+    
     // 只处理第2层激活的情况
     if (layer == 2 && state) {
-        LOG_INF("Layer 2 activated - triggering LED blink");
+        LOG_INF(">>> Layer 2 ACTIVATED - triggering LED blink <<<");
         
         // 启动LED闪烁
         int ret = led_blink(CONFIG_LAYER_LED_BLINK_COUNT,
@@ -208,13 +210,10 @@ static void layer_state_control_led(uint8_t layer, bool state) {
         if (ret < 0) {
             LOG_ERR("Failed to start LED blink: %d", ret);
         } else {
-            manager.last_triggered_layer = layer;
-            manager.last_change_timestamp = k_uptime_get();
+            LOG_INF("LED blink started successfully");
         }
     } else if (layer == 2 && !state) {
         LOG_INF("Layer 2 deactivated");
-        // 可以选择在层2停用时停止LED闪烁
-        // led_stop_blinking();
     }
 #endif // CONFIG_LAYER_STATE_LED_CONTROL
 }

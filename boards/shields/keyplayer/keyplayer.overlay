@@ -87,4 +87,13 @@
     //    debounce-ms = <100>;
     //    status = "okay";
     //};
+
+    // LED节点
+    leds {
+        compatible = "gpio-leds";
+        layer_indicator: layer_indicator {
+            gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06, 高电平点亮
+            label = "Layer Indicator LED";
+        };
+    };
 };

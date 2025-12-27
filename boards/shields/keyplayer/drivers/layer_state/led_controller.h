@@ -67,6 +67,13 @@ int led_stop_blinking(void);
  */
 bool led_is_blinking(void);
 
+/**
+ * @brief Get the current LED state.
+ * 
+ * @return enum led_state Current LED state.
+ */
+enum led_state led_get_state(void);
+
 #ifdef __cplusplus
 }
 #endif

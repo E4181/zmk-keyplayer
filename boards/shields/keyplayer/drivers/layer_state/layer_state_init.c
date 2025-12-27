@@ -36,16 +36,17 @@ static void example_layer_callback(uint8_t layer, bool state, void *user_data) {
 static int layer_state_init(void) {
     LOG_INF("Starting layer state manager initialization");
     
-    int ret;  // 将变量定义移到函数开头
+    int ret;
     
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
     // Initialize LED controller
+    LOG_INF("Initializing LED controller for P1.06...");
     ret = led_controller_init();
     if (ret < 0) {
-        LOG_ERR("Failed to initialize LED controller: %d", ret);
-        // Continue anyway, layer state manager can still work
+        LOG_ERR("LED controller initialization FAILED: %d", ret);
+        LOG_WRN("LED functionality will be unavailable, but layer state manager will continue working");
     } else {
-        LOG_INF("LED controller initialized");
+        LOG_INF("LED controller initialized SUCCESSFULLY");
     }
 #endif
     
@@ -68,11 +69,14 @@ static int layer_state_init(void) {
     LOG_INF("Layer state manager initialized successfully");
     
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
-    LOG_INF("LED control enabled for layer 2:");
-    LOG_INF("  - Blink count: %d", CONFIG_LAYER_LED_BLINK_COUNT);
-    LOG_INF("  - Blink interval: %d ms", CONFIG_LAYER_LED_BLINK_INTERVAL_MS);
-    LOG_INF("  - Blink duration: %d ms", CONFIG_LAYER_LED_BLINK_DURATION_MS);
-    LOG_INF("  - GPIO: %s pin %d", CONFIG_LAYER_LED_GPIO_PORT, CONFIG_LAYER_LED_GPIO_PIN);
+    LOG_INF("=== LED Configuration Summary ===");
+    LOG_INF("GPIO: P1.06 (pin 38)");
+    LOG_INF("Active: %s", CONFIG_LAYER_LED_ACTIVE_HIGH ? "HIGH" : "LOW");
+    LOG_INF("Blink pattern: %d times, %dms on, %dms off", 
+           CONFIG_LAYER_LED_BLINK_COUNT,
+           CONFIG_LAYER_LED_BLINK_DURATION_MS,
+           CONFIG_LAYER_LED_BLINK_INTERVAL_MS - CONFIG_LAYER_LED_BLINK_DURATION_MS);
+    LOG_INF("Trigger: Layer 2 activation");
 #endif
     
     return 0;

@@ -63,6 +63,7 @@ config ZMK_CHARGER_LED_INDICATOR
 
 endif # ZMK_CHARGER
 
+# Layer State Manager Configuration
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"
     default y
@@ -86,7 +87,7 @@ config LAYER_STATE_DEBUG_LOG
 
 config LAYER_STATE_LOG_LEVEL
     int "Log level for layer state"
-    default 3
+    default 4
     range 0 4
     help
       Sets log level for layer state manager.
@@ -102,16 +103,16 @@ if LAYER_STATE_LED_CONTROL
 
 config LAYER_LED_GPIO_PORT
     string "LED GPIO port"
-    default "GPIO_0"
+    default "gpio1"
     help
-      GPIO port for the LED (e.g., GPIO_0, GPIO_1).
+      GPIO port for the LED (e.g., gpio0, gpio1).
 
 config LAYER_LED_GPIO_PIN
     int "LED GPIO pin"
-    default 10
-    range 0 31
+    default 38
+    range 0 47
     help
-      GPIO pin number for the LED.
+      GPIO pin number for the LED. For P1.06 use 38.
 
 config LAYER_LED_ACTIVE_HIGH
     bool "LED is active high"
