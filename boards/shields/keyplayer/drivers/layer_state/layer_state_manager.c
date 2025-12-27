@@ -39,7 +39,9 @@ static struct led_indicator led_indicator;
 /**
  * @brief Check if LED indicator is configured in device tree.
  */
-#if DT_NODE_EXISTS(DT_PATH(led_indicator))
+#define LED_INDICATOR_NODE DT_PATH(led_indicator)
+
+#if DT_NODE_EXISTS(LED_INDICATOR_NODE)
 #define LED_INDICATOR_AVAILABLE 1
 #else
 #define LED_INDICATOR_AVAILABLE 0
@@ -90,13 +92,21 @@ static void led_blink_timer_handler(struct k_timer *timer) {
 int layer_state_led_indicator_init(void) {
 #if LED_INDICATOR_AVAILABLE
     // Initialize LED GPIO from device tree
-    led_indicator.led = GPIO_DT_SPEC_GET(DT_PATH(led_indicator), led_gpios);
-    led_indicator.target_layer = DT_PROP(DT_PATH(led_indicator), trigger_layer);
-    led_indicator.blink_duration_ms = DT_PROP(DT_PATH(led_indicator), blink_duration_ms);
-    led_indicator.blink_count = DT_PROP(DT_PATH(led_indicator), blink_count);
+    if (!DT_NODE_EXISTS(LED_INDICATOR_NODE)) {
+        LOG_WRN("LED indicator node not found in device tree");
+        return -ENODEV;
+    }
+    
+    // 使用正确的宏来获取 GPIO 规格
+    led_indicator.led = (struct gpio_dt_spec)GPIO_DT_SPEC_GET(LED_INDICATOR_NODE, led_gpios);
+    led_indicator.target_layer = DT_PROP(LED_INDICATOR_NODE, trigger_layer);
+    led_indicator.blink_duration_ms = DT_PROP(LED_INDICATOR_NODE, blink_duration_ms);
+    led_indicator.blink_count = DT_PROP(LED_INDICATOR_NODE, blink_count);
     
     LOG_INF("LED indicator configured:");
-    LOG_INF("  GPIO: %s pin %d", led_indicator.led.port->name, led_indicator.led.pin);
+    LOG_INF("  GPIO: port=%p, pin=%d", 
+           led_indicator.led.port, 
+           led_indicator.led.pin);
     LOG_INF("  Trigger layer: %d", led_indicator.target_layer);
     LOG_INF("  Blink duration: %d ms", led_indicator.blink_duration_ms);
     LOG_INF("  Blink count: %d", led_indicator.blink_count);
@@ -163,7 +173,9 @@ void layer_state_led_stop_blinking(void) {
         led_indicator.current_blink = 0;
         
         // Ensure LED is off
-        gpio_pin_set_dt(&led_indicator.led, 0);
+        if (gpio_is_ready_dt(&led_indicator.led)) {
+            gpio_pin_set_dt(&led_indicator.led, 0);
+        }
         
         LOG_DBG("LED blinking stopped");
     }
@@ -236,9 +248,166 @@ int layer_state_manager_init(void) {
     return 0;
 }
 
-// ... (其余函数保持不变，与原始代码相同)
-// Register callback, unregister callback, get_active, is_active, get_highest_active, print_current
-// layer_state_update, layer_state_notify_callbacks, on_layer_state_changed
+/**
+ * @brief Register a callback for layer state changes.
+ * 
+ * @param callback Function to call when layer state changes.
+ * @param user_data User data to pass to the callback.
+ * @return int 0 on success, negative error code on failure.
+ */
+int layer_state_register_callback(layer_state_callback_t callback, void *user_data) {
+    if (callback == NULL) {
+        LOG_ERR("Cannot register NULL callback");
+        return -EINVAL;
+    }
+    
+    if (manager.callback_count >= CONFIG_LAYER_STATE_MAX_CALLBACKS) {
+        LOG_ERR("Maximum number of callbacks (%d) reached", CONFIG_LAYER_STATE_MAX_CALLBACKS);
+        return -ENOMEM;
+    }
+    
+    // Check if callback is already registered
+    for (int i = 0; i < manager.callback_count; i++) {
+        if (manager.callbacks[i].callback == callback) {
+            LOG_WRN("Callback already registered");
+            return -EALREADY;
+        }
+    }
+    
+    // Register the callback
+    manager.callbacks[manager.callback_count].callback = callback;
+    manager.callbacks[manager.callback_count].user_data = user_data;
+    manager.callback_count++;
+    
+    LOG_DBG("Callback registered, total callbacks: %d", manager.callback_count);
+    
+    return 0;
+}
+
+/**
+ * @brief Unregister a previously registered callback.
+ * 
+ * @param callback Callback function to unregister.
+ * @return int 0 on success, negative error code on failure.
+ */
+int layer_state_unregister_callback(layer_state_callback_t callback) {
+    if (callback == NULL) {
+        return -EINVAL;
+    }
+    
+    for (int i = 0; i < manager.callback_count; i++) {
+        if (manager.callbacks[i].callback == callback) {
+            // Move remaining callbacks down
+            for (int j = i; j < manager.callback_count - 1; j++) {
+                manager.callbacks[j] = manager.callbacks[j + 1];
+            }
+            manager.callback_count--;
+            
+            LOG_DBG("Callback unregistered, remaining callbacks: %d", manager.callback_count);
+            return 0;
+        }
+    }
+    
+    LOG_WRN("Callback not found for unregistration");
+    return -ENOENT;
+}
+
+/**
+ * @brief Get the current active layers as a bitmask.
+ * 
+ * @return zmk_keymap_layers_state_t Bitmask of active layers.
+ */
+zmk_keymap_layers_state_t layer_state_get_active(void) {
+    return manager.current_state;
+}
+
+/**
+ * @brief Check if a specific layer is currently active.
+ * 
+ * @param layer Layer number to check.
+ * @return true Layer is active.
+ * @return false Layer is not active.
+ */
+bool layer_state_is_active(uint8_t layer) {
+    if (layer >= 32) {
+        return false;
+    }
+    return (manager.current_state & BIT(layer)) != 0 || layer == manager.default_layer;
+}
+
+/**
+ * @brief Get the highest currently active layer index.
+ * 
+ * @return uint8_t Highest active layer index.
+ */
+uint8_t layer_state_get_highest_active(void) {
+    for (int i = 31; i >= 0; i--) {
+        if (layer_state_is_active(i)) {
+            return i;
+        }
+    }
+    return manager.default_layer;
+}
+
+/**
+ * @brief Print current layer state to logs.
+ */
+void layer_state_print_current(void) {
+    LOG_INF("=== Current Layer State ===");
+    LOG_INF("Active layers bitmask: 0x%08X", manager.current_state);
+    LOG_INF("Default layer: %d", manager.default_layer);
+    LOG_INF("Highest active layer: %d", layer_state_get_highest_active());
+    
+    LOG_INF("Active layers:");
+    for (int i = 0; i < 32; i++) {
+        if (layer_state_is_active(i)) {
+            LOG_INF("  Layer %d: %s", 
+                   i,
+                   (i == manager.default_layer) ? "(default)" : "");
+        }
+    }
+}
+
+/**
+ * @brief Internal function to update manager state.
+ * 
+ * @param ev Layer state changed event.
+ */
+static void layer_state_update(const struct zmk_layer_state_changed *ev) {
+    if (ev->layer >= 32) {
+        LOG_WRN("Invalid layer number: %d", ev->layer);
+        return;
+    }
+    
+    // Update state
+    if (ev->state) {
+        manager.current_state |= BIT(ev->layer);
+    } else {
+        manager.current_state &= ~BIT(ev->layer);
+    }
+    
+    // Log the change
+#if CONFIG_LAYER_STATE_DEBUG_LOG
+    LOG_DBG("Layer %d %s (total active: 0x%08X)", 
+           ev->layer,
+           ev->state ? "ACTIVATED" : "DEACTIVATED",
+           manager.current_state);
+#endif
+}
+
+/**
+ * @brief Internal function to notify all callbacks.
+ * 
+ * @param ev Layer state changed event.
+ */
+static void layer_state_notify_callbacks(const struct zmk_layer_state_changed *ev) {
+    for (int i = 0; i < manager.callback_count; i++) {
+        if (manager.callbacks[i].callback) {
+            manager.callbacks[i].callback(ev->layer, ev->state, 
+                                          manager.callbacks[i].user_data);
+        }
+    }
+}
 
 /**
  * @brief Layer state changed event handler.
