@@ -20,10 +20,9 @@ extern "C" {
  * 
  * @param layer The layer number that changed.
  * @param state True if layer was activated, false if deactivated.
- * @param locked True if layer is locked, false otherwise.
  * @param user_data User-provided data passed during registration.
  */
-typedef void (*layer_state_callback_t)(uint8_t layer, bool state, bool locked, void *user_data);
+typedef void (*layer_state_callback_t)(uint8_t layer, bool state, void *user_data);
 
 /**
  * @brief Initialize the layer state manager.
@@ -57,13 +56,6 @@ int layer_state_unregister_callback(layer_state_callback_t callback);
 zmk_keymap_layers_state_t layer_state_get_active(void);
 
 /**
- * @brief Get the locked layers as a bitmask.
- * 
- * @return zmk_keymap_layers_state_t Bitmask of locked layers.
- */
-zmk_keymap_layers_state_t layer_state_get_locked(void);
-
-/**
  * @brief Check if a specific layer is currently active.
  * 
  * @param layer Layer number to check.
@@ -71,15 +63,6 @@ zmk_keymap_layers_state_t layer_state_get_locked(void);
  * @return false Layer is not active.
  */
 bool layer_state_is_active(uint8_t layer);
-
-/**
- * @brief Check if a specific layer is locked.
- * 
- * @param layer Layer number to check.
- * @return true Layer is locked.
- * @return false Layer is not locked.
- */
-bool layer_state_is_locked(uint8_t layer);
 
 /**
  * @brief Get the highest currently active layer index.

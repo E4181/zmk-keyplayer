@@ -46,8 +46,6 @@ config ZMK_CHARGER_LED_INDICATOR
 
 endif # ZMK_CHARGER
 
-# 在 app/Kconfig 中添加以下内容
-
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"
     default y

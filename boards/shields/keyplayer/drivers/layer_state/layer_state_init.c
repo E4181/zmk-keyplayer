@@ -16,13 +16,12 @@ LOG_MODULE_REGISTER(layer_state_init, CONFIG_LAYER_STATE_LOG_LEVEL);
  * This function will log every layer state change.
  * You can remove this if you don't need it.
  */
-static void example_layer_callback(uint8_t layer, bool state, bool locked, void *user_data) {
+static void example_layer_callback(uint8_t layer, bool state, void *user_data) {
     const char *user = (const char *)user_data;
-    LOG_INF("[%s] Layer %d %s %s", 
+    LOG_INF("[%s] Layer %d %s", 
            user ? user : "unknown",
            layer,
-           state ? "activated" : "deactivated",
-           locked ? "(locked)" : "");
+           state ? "activated" : "deactivated");
 }
 
 /**

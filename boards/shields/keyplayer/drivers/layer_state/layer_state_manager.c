@@ -16,8 +16,6 @@ LOG_MODULE_REGISTER(layer_state_manager, CONFIG_LAYER_STATE_LOG_LEVEL);
 static struct layer_state_manager {
     /** Current active layers bitmask */
     zmk_keymap_layers_state_t current_state;
-    /** Current locked layers bitmask */
-    zmk_keymap_layers_state_t locked_state;
     /** Default layer ID */
     zmk_keymap_layer_id_t default_layer;
     
@@ -44,7 +42,6 @@ int layer_state_manager_init(void) {
     
     // Get initial state from ZMK
     manager.current_state = zmk_keymap_layer_state();
-    manager.locked_state = 0; // 暂时设置为0，等待事件更新
     manager.default_layer = zmk_keymap_layer_default();
     
     LOG_INF("Initial layer state: 0x%08X", manager.current_state);
@@ -134,15 +131,6 @@ zmk_keymap_layers_state_t layer_state_get_active(void) {
 }
 
 /**
- * @brief Get the locked layers as a bitmask.
- * 
- * @return zmk_keymap_layers_state_t Bitmask of locked layers.
- */
-zmk_keymap_layers_state_t layer_state_get_locked(void) {
-    return manager.locked_state;
-}
-
-/**
  * @brief Check if a specific layer is currently active.
  * 
  * @param layer Layer number to check.
@@ -154,20 +142,6 @@ bool layer_state_is_active(uint8_t layer) {
         return false;
     }
     return (manager.current_state & BIT(layer)) != 0 || layer == manager.default_layer;
-}
-
-/**
- * @brief Check if a specific layer is locked.
- * 
- * @param layer Layer number to check.
- * @return true Layer is locked.
- * @return false Layer is not locked.
- */
-bool layer_state_is_locked(uint8_t layer) {
-    if (layer >= 32) {
-        return false;
-    }
-    return (manager.locked_state & BIT(layer)) != 0;
 }
 
 /**
@@ -190,17 +164,14 @@ uint8_t layer_state_get_highest_active(void) {
 void layer_state_print_current(void) {
     LOG_INF("=== Current Layer State ===");
     LOG_INF("Active layers bitmask: 0x%08X", manager.current_state);
-    LOG_INF("Locked layers bitmask: 0x%08X", manager.locked_state);
     LOG_INF("Default layer: %d", manager.default_layer);
     LOG_INF("Highest active layer: %d", layer_state_get_highest_active());
     
     LOG_INF("Active layers:");
     for (int i = 0; i < 32; i++) {
         if (layer_state_is_active(i)) {
-            bool locked = layer_state_is_locked(i);
-            LOG_INF("  Layer %d: %s%s", 
-                   i, 
-                   locked ? "LOCKED " : "",
+            LOG_INF("  Layer %d: %s", 
+                   i,
                    (i == manager.default_layer) ? "(default)" : "");
         }
     }
@@ -220,11 +191,8 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
     // Update state
     if (ev->state) {
         manager.current_state |= BIT(ev->layer);
-        // 注意：从事件中可能没有locked信息，暂时不更新locked状态
-        // 如果你需要锁定状态，可以从zmk_keymap_layer_locks()获取
     } else {
         manager.current_state &= ~BIT(ev->layer);
-        // 同样，不更新locked状态
     }
     
     // Log the change
@@ -244,8 +212,7 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
 static void layer_state_notify_callbacks(const struct zmk_layer_state_changed *ev) {
     for (int i = 0; i < manager.callback_count; i++) {
         if (manager.callbacks[i].callback) {
-            // 注意：从事件中可能没有locked信息，暂时传递false
-            manager.callbacks[i].callback(ev->layer, ev->state, false, 
+            manager.callbacks[i].callback(ev->layer, ev->state, 
                                           manager.callbacks[i].user_data);
         }
     }
