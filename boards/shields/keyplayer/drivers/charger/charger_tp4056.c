@@ -10,11 +10,12 @@
 #include <zephyr/logging/log.h>
 
 #include <zmk/event_manager.h>
-#include "charger_tp4056.h"
+#include <zmk/charger_tp4056.h>
 
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+/* 定义日志模块 */
+LOG_MODULE_REGISTER(zmk_charger, CONFIG_ZMK_CHARGER_LOG_LEVEL);
 
-/* 设备树定义 - 使用DT_COMPAT方式 */
+/* 设备树定义 */
 #define DT_DRV_COMPAT zmk_charger_tp4056
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
@@ -62,6 +63,8 @@ static void charger_status_work_handler(struct k_work *work) {
         return;
     }
     
+    LOG_DBG("CHRG pin value: %d", val);
+    
     enum charger_state new_state = (val == 0) ? 
         CHARGER_STATE_CHARGING : CHARGER_STATE_NOT_CHARGING;
     
@@ -75,12 +78,21 @@ static void charger_status_work_handler(struct k_work *work) {
         current_state = new_state;
         
         // 发布充电状态变化事件
-        raise_zmk_charger_state_changed((struct zmk_charger_state_changed){
+        int ret = raise_zmk_charger_state_changed((struct zmk_charger_state_changed){
             .state = new_state
         });
         
+        if (ret != 0) {
+            LOG_ERR("Failed to raise charger state changed event: %d", ret);
+        } else {
+            LOG_DBG("Charger state event raised successfully");
+        }
+        
         // 更新LED状态
         k_work_submit(&data->led_update_work);
+    } else {
+        LOG_DBG("Charger state unchanged: %s", 
+                new_state == CHARGER_STATE_CHARGING ? "CHARGING" : "NOT_CHARGING");
     }
 }
 
@@ -89,6 +101,7 @@ static void charger_debounce_work_handler(struct k_work *work) {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
     struct charger_tp4056_data *data = CONTAINER_OF(dwork, struct charger_tp4056_data, debounce_work);
     
+    LOG_DBG("Debounce timer expired, checking charger state");
     k_work_submit(&data->status_work);
 }
 
@@ -100,6 +113,7 @@ static void charger_gpio_callback(const struct device *dev,
     const struct charger_tp4056_config *config = dev->config;
     
     if (pins & BIT(config->chrg_gpio.pin)) {
+        LOG_DBG("CHRG pin interrupt triggered, scheduling debounce");
         k_work_reschedule(&data->debounce_work, K_MSEC(config->debounce_ms));
     }
 }
@@ -126,6 +140,8 @@ static void update_led_state(const struct device *dev) {
             ret = gpio_pin_set_dt(&config->led_gpio, 1);
             if (ret < 0) {
                 LOG_ERR("Failed to turn on LED: %d", ret);
+            } else {
+                LOG_INF("LED turned ON (Charging)");
             }
             break;
             
@@ -134,6 +150,8 @@ static void update_led_state(const struct device *dev) {
             ret = gpio_pin_set_dt(&config->led_gpio, 0);
             if (ret < 0) {
                 LOG_ERR("Failed to turn off LED: %d", ret);
+            } else {
+                LOG_INF("LED turned OFF (Not charging)");
             }
             break;
     }
@@ -141,11 +159,16 @@ static void update_led_state(const struct device *dev) {
 
 /* 公共API函数 */
 enum charger_state zmk_charger_get_state(void) {
+    LOG_DBG("Current charger state: %s", 
+            current_state == CHARGER_STATE_CHARGING ? "CHARGING" :
+            current_state == CHARGER_STATE_NOT_CHARGING ? "NOT_CHARGING" : "UNKNOWN");
     return current_state;
 }
 
 bool zmk_charger_is_charging(void) {
-    return current_state == CHARGER_STATE_CHARGING;
+    bool is_charging = (current_state == CHARGER_STATE_CHARGING);
+    LOG_DBG("Is charging: %s", is_charging ? "true" : "false");
+    return is_charging;
 }
 
 /* 初始化函数 */
@@ -153,6 +176,8 @@ static int charger_tp4056_init(const struct device *dev) {
     struct charger_tp4056_data *data = dev->data;
     const struct charger_tp4056_config *config = dev->config;
     int ret;
+    
+    LOG_INF("Initializing TP4056 charger driver...");
     
     data->dev = dev;
     data->state = CHARGER_STATE_UNKNOWN;
@@ -169,6 +194,9 @@ static int charger_tp4056_init(const struct device *dev) {
         return ret;
     }
     
+    LOG_INF("CHRG GPIO configured: port=%s, pin=%d, flags=0x%x",
+            config->chrg_gpio.port->name, config->chrg_gpio.pin, config->chrg_gpio.dt_flags);
+    
     /* 初始化LED GPIO */
     if (!device_is_ready(config->led_gpio.port)) {
         LOG_ERR("LED GPIO device not ready");
@@ -180,6 +208,9 @@ static int charger_tp4056_init(const struct device *dev) {
         LOG_ERR("Failed to configure LED GPIO: %d", ret);
         return ret;
     }
+    
+    LOG_INF("LED GPIO configured: port=%s, pin=%d, flags=0x%x",
+            config->led_gpio.port->name, config->led_gpio.pin, config->led_gpio.dt_flags);
     
     /* 初始化GPIO中断 */
     ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio, GPIO_INT_EDGE_BOTH);
@@ -197,10 +228,20 @@ static int charger_tp4056_init(const struct device *dev) {
     gpio_init_callback(&data->chrg_cb, charger_gpio_callback, BIT(config->chrg_gpio.pin));
     gpio_add_callback(config->chrg_gpio.port, &data->chrg_cb);
     
+    LOG_INF("GPIO callback registered for CHRG pin");
+    
     /* 读取初始状态 */
+    LOG_INF("Reading initial charger state...");
     k_work_submit(&data->status_work);
     
-    LOG_INF("TP4056 charger driver initialized with LED on pin %d", config->led_gpio.pin);
+    LOG_INF("TP4056 charger driver initialized successfully");
+    LOG_INF("- CHRG pin: GPIO%d pin %d", 
+            config->chrg_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio0)) ? 0 : 1,
+            config->chrg_gpio.pin);
+    LOG_INF("- LED pin: GPIO%d pin %d",
+            config->led_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio0)) ? 0 : 1,
+            config->led_gpio.pin);
+    LOG_INF("- Debounce time: %d ms", config->debounce_ms);
     
     return 0;
 }
@@ -214,7 +255,7 @@ static int charger_tp4056_init(const struct device *dev) {
     static const struct charger_tp4056_config charger_tp4056_config_##n = { \
         .chrg_gpio = GPIO_DT_SPEC_INST_GET(n, chrg_gpios), \
         .led_gpio = GPIO_DT_SPEC_INST_GET(n, led_gpios), \
-        .debounce_ms = DT_INST_PROP(n, debounce_ms), \
+        .debounce_ms = DT_INST_PROP_OR(n, debounce_ms, 50), \
     }; \
     \
     DEVICE_DT_INST_DEFINE(n, \

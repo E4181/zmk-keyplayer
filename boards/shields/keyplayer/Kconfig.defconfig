@@ -21,6 +21,12 @@ menuconfig ZMK_CHARGER
     help
       Enable TP4056 charger detection support
 
+menuconfig ZMK_CHARGER
+    bool "Charger detection support"
+    default y
+    help
+      Enable TP4056 charger detection support
+
 if ZMK_CHARGER
 
 config ZMK_CHARGER_TP4056
@@ -29,6 +35,17 @@ config ZMK_CHARGER_TP4056
     default y
     help
       Enable TP4056 charger detection via CHRG pin
+
+config ZMK_CHARGER_LOG_LEVEL
+    int "Charger log level"
+    depends on ZMK_CHARGER_TP4056
+    default 2 if ZMK_LOG_LEVEL_DBG
+    default 1 if ZMK_LOG_LEVEL_INF
+    default 0
+    range 0 4
+    help
+      Set log level for charger module.
+      0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
 
 config ZMK_CHARGER_DEBOUNCE_MS
     int "Debounce time in milliseconds"
