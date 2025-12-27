@@ -6,7 +6,7 @@
 
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
-#include "layer_state_manager.h"
+#include <zmk/features/layer_state_manager.h>
 
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
 #include "led_controller.h"
@@ -36,9 +36,11 @@ static void example_layer_callback(uint8_t layer, bool state, void *user_data) {
 static int layer_state_init(void) {
     LOG_INF("Starting layer state manager initialization");
     
+    int ret;  // 将变量定义移到函数开头
+    
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
     // Initialize LED controller
-    int ret = led_controller_init();
+    ret = led_controller_init();
     if (ret < 0) {
         LOG_ERR("Failed to initialize LED controller: %d", ret);
         // Continue anyway, layer state manager can still work
@@ -48,7 +50,7 @@ static int layer_state_init(void) {
 #endif
     
     // Initialize the layer state manager
-    int ret = layer_state_manager_init();
+    ret = layer_state_manager_init();
     if (ret < 0) {
         LOG_ERR("Failed to initialize layer state manager: %d", ret);
         return ret;
