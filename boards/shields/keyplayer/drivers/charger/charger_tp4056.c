@@ -10,7 +10,7 @@
 #include <zephyr/logging/log.h>
 
 #include <zmk/event_manager.h>
-#include <zmk/charger_tp4056.h>
+#include "charger_tp4056.h"
 
 /* 定义日志模块 */
 LOG_MODULE_REGISTER(zmk_charger, CONFIG_ZMK_CHARGER_LOG_LEVEL);
