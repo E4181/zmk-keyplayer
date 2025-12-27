@@ -8,6 +8,10 @@
 #include <string.h>
 #include "layer_state_manager.h"
 
+#if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+#include <zmk/features/led_controller.h>
+#endif
+
 LOG_MODULE_REGISTER(layer_state_manager, CONFIG_LAYER_STATE_LOG_LEVEL);
 
 /**
@@ -27,6 +31,11 @@ static struct layer_state_manager {
     
     /** Number of registered callbacks */
     uint8_t callback_count;
+    
+    /** Last triggered layer (for LED control) */
+    uint8_t last_triggered_layer;
+    /** Timestamp of last layer change */
+    int64_t last_change_timestamp;
 } manager;
 
 /**
@@ -43,6 +52,8 @@ int layer_state_manager_init(void) {
     // Get initial state from ZMK
     manager.current_state = zmk_keymap_layer_state();
     manager.default_layer = zmk_keymap_layer_default();
+    manager.last_triggered_layer = 0xFF; // Invalid value
+    manager.last_change_timestamp = k_uptime_get();
     
     LOG_INF("Initial layer state: 0x%08X", manager.current_state);
     LOG_INF("Default layer: %d", manager.default_layer);
@@ -178,6 +189,37 @@ void layer_state_print_current(void) {
 }
 
 /**
+ * @brief Internal function to control LED based on layer state.
+ * 
+ * @param layer Layer that changed.
+ * @param state New state of the layer.
+ */
+static void layer_state_control_led(uint8_t layer, bool state) {
+#if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+    // 只处理第2层激活的情况
+    if (layer == 2 && state) {
+        LOG_INF("Layer 2 activated - triggering LED blink");
+        
+        // 启动LED闪烁
+        int ret = led_blink(CONFIG_LAYER_LED_BLINK_COUNT,
+                           CONFIG_LAYER_LED_BLINK_INTERVAL_MS,
+                           CONFIG_LAYER_LED_BLINK_DURATION_MS);
+        
+        if (ret < 0) {
+            LOG_ERR("Failed to start LED blink: %d", ret);
+        } else {
+            manager.last_triggered_layer = layer;
+            manager.last_change_timestamp = k_uptime_get();
+        }
+    } else if (layer == 2 && !state) {
+        LOG_INF("Layer 2 deactivated");
+        // 可以选择在层2停用时停止LED闪烁
+        // led_stop_blinking();
+    }
+#endif // CONFIG_LAYER_STATE_LED_CONTROL
+}
+
+/**
  * @brief Internal function to update manager state.
  * 
  * @param ev Layer state changed event.
@@ -236,6 +278,9 @@ static int on_layer_state_changed(const zmk_event_t *eh) {
         
         // Update internal state
         layer_state_update(ev);
+        
+        // Control LED based on layer state
+        layer_state_control_led(ev->layer, ev->state);
         
         // Notify callbacks
         layer_state_notify_callbacks(ev);

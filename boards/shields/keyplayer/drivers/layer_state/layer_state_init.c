@@ -8,6 +8,10 @@
 #include <zephyr/logging/log.h>
 #include "layer_state_manager.h"
 
+#if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+#include <zmk/features/led_controller.h>
+#endif
+
 LOG_MODULE_REGISTER(layer_state_init, CONFIG_LAYER_STATE_LOG_LEVEL);
 
 /**
@@ -32,6 +36,17 @@ static void example_layer_callback(uint8_t layer, bool state, void *user_data) {
 static int layer_state_init(void) {
     LOG_INF("Starting layer state manager initialization");
     
+#if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+    // Initialize LED controller
+    int ret = led_controller_init();
+    if (ret < 0) {
+        LOG_ERR("Failed to initialize LED controller: %d", ret);
+        // Continue anyway, layer state manager can still work
+    } else {
+        LOG_INF("LED controller initialized");
+    }
+#endif
+    
     // Initialize the layer state manager
     int ret = layer_state_manager_init();
     if (ret < 0) {
@@ -49,6 +64,14 @@ static int layer_state_init(void) {
     layer_state_print_current();
     
     LOG_INF("Layer state manager initialized successfully");
+    
+#if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
+    LOG_INF("LED control enabled for layer 2:");
+    LOG_INF("  - Blink count: %d", CONFIG_LAYER_LED_BLINK_COUNT);
+    LOG_INF("  - Blink interval: %d ms", CONFIG_LAYER_LED_BLINK_INTERVAL_MS);
+    LOG_INF("  - Blink duration: %d ms", CONFIG_LAYER_LED_BLINK_DURATION_MS);
+    LOG_INF("  - GPIO: %s pin %d", CONFIG_LAYER_LED_GPIO_PORT, CONFIG_LAYER_LED_GPIO_PIN);
+#endif
     
     return 0;
 }

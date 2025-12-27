@@ -92,4 +92,54 @@ config LAYER_STATE_LOG_LEVEL
       Sets log level for layer state manager.
       0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
 
+config LAYER_STATE_LED_CONTROL
+    bool "Enable LED control for layer state"
+    default y
+    help
+      Enable LED blinking control for specific layer changes.
+
+if LAYER_STATE_LED_CONTROL
+
+config LAYER_LED_GPIO_PORT
+    string "LED GPIO port"
+    default "GPIO_0"
+    help
+      GPIO port for the LED (e.g., GPIO_0, GPIO_1).
+
+config LAYER_LED_GPIO_PIN
+    int "LED GPIO pin"
+    default 10
+    range 0 31
+    help
+      GPIO pin number for the LED.
+
+config LAYER_LED_ACTIVE_HIGH
+    bool "LED is active high"
+    default y
+    help
+      Set to y if LED turns on when GPIO is high.
+
+config LAYER_LED_BLINK_COUNT
+    int "LED blink count for layer 2"
+    default 5
+    range 1 20
+    help
+      Number of times LED blinks when layer 2 is activated.
+
+config LAYER_LED_BLINK_INTERVAL_MS
+    int "LED blink interval in milliseconds"
+    default 500
+    range 100 2000
+    help
+      Interval between LED blinks in milliseconds.
+
+config LAYER_LED_BLINK_DURATION_MS
+    int "LED blink duration in milliseconds"
+    default 200
+    range 50 1000
+    help
+      Duration of each LED blink in milliseconds.
+
+endif # LAYER_STATE_LED_CONTROL
+
 endif # ZMK_LAYER_STATE_MANAGER
