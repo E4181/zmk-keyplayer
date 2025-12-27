@@ -9,7 +9,7 @@
 #include "layer_state_manager.h"
 
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
-#include <zmk/features/led_controller.h>
+#include "led_controller.h"
 #endif
 
 LOG_MODULE_REGISTER(layer_state_init, CONFIG_LAYER_STATE_LOG_LEVEL);
