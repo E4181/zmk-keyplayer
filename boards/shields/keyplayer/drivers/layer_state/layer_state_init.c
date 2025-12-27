@@ -28,12 +28,9 @@ static void example_layer_callback(uint8_t layer, bool state, bool locked, void 
 /**
  * @brief Initialize the layer state manager at application startup.
  * 
- * @param dev Unused device pointer.
  * @return int 0 on success.
  */
-static int layer_state_init(const struct device *dev) {
-    ARG_UNUSED(dev);
-    
+static int layer_state_init(void) {
     LOG_INF("Starting layer state manager initialization");
     
     // Initialize the layer state manager
