@@ -45,3 +45,36 @@ config ZMK_CHARGER_LED_INDICATOR
       Enable LED indicator for charging status
 
 endif # ZMK_CHARGER
+
+# 在 app/Kconfig 中添加以下内容
+
+menuconfig ZMK_LAYER_STATE_MANAGER
+    bool "Layer State Manager"
+    default y
+    help
+      Enable layer state manager for monitoring layer changes.
+
+if ZMK_LAYER_STATE_MANAGER
+
+config LAYER_STATE_MAX_CALLBACKS
+    int "Maximum number of callbacks"
+    default 5
+    range 1 20
+    help
+      Maximum number of callback functions that can be registered.
+
+config LAYER_STATE_DEBUG_LOG
+    bool "Enable debug logging"
+    default y
+    help
+      Enable debug logging for layer state changes.
+
+config LAYER_STATE_LOG_LEVEL
+    int "Log level for layer state"
+    default 3
+    range 0 4
+    help
+      Sets log level for layer state manager.
+      0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
+
+endif # ZMK_LAYER_STATE_MANAGER
