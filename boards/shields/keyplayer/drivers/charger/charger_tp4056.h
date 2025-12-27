@@ -25,11 +25,6 @@ struct zmk_charger_state_changed {
 
 ZMK_EVENT_DECLARE(zmk_charger_state_changed);
 
-static inline struct zmk_charger_state_changed *
-as_zmk_charger_state_changed(const zmk_event_t *eh) {
-    return as_zmk_event(eh)->data;
-}
-
 /**
  * @brief Get the current charger state
  *

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 description: |
-  Driver for detecting TP4056 charger status via CHRG pin
+  TP4056 charger detection via CHRG pin with LED indicator
 
 compatible: "zmk,charger-tp4056"
 
@@ -11,11 +11,15 @@ properties:
     type: phandle-array
     required: true
     description: GPIO pin connected to TP4056 CHRG pin (active low)
-  label:
-    type: string
-    required: false
+  led-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin for charging status LED indicator
   debounce-ms:
     type: int
-    description: Debounce time in milliseconds for charger status changes
     required: false
+    description: Debounce time in milliseconds for charger status changes
     default: 50
+  status:
+    type: string
+    required: false

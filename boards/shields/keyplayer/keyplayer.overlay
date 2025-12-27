@@ -82,16 +82,9 @@
 
     charger: charger {
         compatible = "zmk,charger-tp4056";
-        label = "CHARGER";
         chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 充电检测引脚
-        debounce-ms = <100>;
-        status = "okay";
-    };
-    
-    charger_led: charger_led {
-        compatible = "gpio-led";
-        label = "CHARGER_LED";
         led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 LED引脚
+        debounce-ms = <100>;
         status = "okay";
     };
 };
