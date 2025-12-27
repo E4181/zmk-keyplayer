@@ -14,12 +14,20 @@
 extern "C" {
 #endif
 
+// LED状态枚举
+enum led_state {
+    LED_STATE_OFF,
+    LED_STATE_ON,
+    LED_STATE_BLINKING,
+};
+
 /**
  * @brief Initialize the LED controller.
  * 
+ * @param dev Device instance.
  * @return int 0 on success, negative error code on failure.
  */
-int led_controller_init(void);
+int led_controller_init(const struct device *dev);
 
 /**
  * @brief Turn LED on.

@@ -6,6 +6,7 @@
 
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/devicetree.h>
 #include "layer_state_manager.h"
 
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
@@ -40,8 +41,8 @@ static int layer_state_init(void) {
     
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
     // Initialize LED controller
-    LOG_INF("Initializing LED controller for P1.06...");
-    ret = led_controller_init();
+    LOG_INF("Initializing LED controller from device tree...");
+    ret = led_controller_init(NULL);
     if (ret < 0) {
         LOG_ERR("LED controller initialization FAILED: %d", ret);
         LOG_WRN("LED functionality will be unavailable, but layer state manager will continue working");
@@ -70,13 +71,12 @@ static int layer_state_init(void) {
     
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
     LOG_INF("=== LED Configuration Summary ===");
-    LOG_INF("GPIO: P1.06 (pin 38)");
-    LOG_INF("Active: %s", CONFIG_LAYER_LED_ACTIVE_HIGH ? "HIGH" : "LOW");
+    LOG_INF("GPIO: From device tree (P1.06)");
+    LOG_INF("Target layer: %d", LAYER_LED_TARGET_LAYER);
     LOG_INF("Blink pattern: %d times, %dms on, %dms off", 
-           CONFIG_LAYER_LED_BLINK_COUNT,
-           CONFIG_LAYER_LED_BLINK_DURATION_MS,
-           CONFIG_LAYER_LED_BLINK_INTERVAL_MS - CONFIG_LAYER_LED_BLINK_DURATION_MS);
-    LOG_INF("Trigger: Layer 2 activation");
+           LAYER_LED_BLINK_COUNT,
+           LAYER_LED_BLINK_DURATION_MS,
+           LAYER_LED_BLINK_INTERVAL_MS - LAYER_LED_BLINK_DURATION_MS);
 #endif
     
     return 0;

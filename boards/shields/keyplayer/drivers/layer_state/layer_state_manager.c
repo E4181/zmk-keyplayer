@@ -6,6 +6,7 @@
 
 #include <zephyr/logging/log.h>
 #include <string.h>
+#include <zephyr/devicetree.h>
 #include "layer_state_manager.h"
 
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
@@ -13,6 +14,22 @@
 #endif
 
 LOG_MODULE_REGISTER(layer_state_manager, CONFIG_LAYER_STATE_LOG_LEVEL);
+
+// 从设备树获取层LED配置
+#define LAYER_STATE_NODE DT_PATH(layer_state_manager)
+
+#if DT_NODE_EXISTS(LAYER_STATE_NODE)
+    #define LAYER_LED_TARGET_LAYER DT_PROP(LAYER_STATE_NODE, layer)
+    #define LAYER_LED_BLINK_COUNT DT_PROP(LAYER_STATE_NODE, count)
+    #define LAYER_LED_BLINK_INTERVAL_MS DT_PROP(LAYER_STATE_NODE, interval_ms)
+    #define LAYER_LED_BLINK_DURATION_MS DT_PROP(LAYER_STATE_NODE, duration_ms)
+#else
+    // 默认配置
+    #define LAYER_LED_TARGET_LAYER 2
+    #define LAYER_LED_BLINK_COUNT 5
+    #define LAYER_LED_BLINK_INTERVAL_MS 500
+    #define LAYER_LED_BLINK_DURATION_MS 200
+#endif
 
 /**
  * @brief Layer state manager instance.
@@ -44,7 +61,21 @@ static struct layer_state_manager {
  * @return int 0 on success, negative error code on failure.
  */
 int layer_state_manager_init(void) {
-    LOG_INF("Initializing layer state manager");
+    LOG_INF("=== LAYER STATE MANAGER INIT ===");
+    
+#if DT_NODE_EXISTS(LAYER_STATE_NODE)
+    LOG_INF("Configuration from device tree:");
+    LOG_INF("  - Target layer: %d", LAYER_LED_TARGET_LAYER);
+    LOG_INF("  - Blink count: %d", LAYER_LED_BLINK_COUNT);
+    LOG_INF("  - Blink interval: %d ms", LAYER_LED_BLINK_INTERVAL_MS);
+    LOG_INF("  - Blink duration: %d ms", LAYER_LED_BLINK_DURATION_MS);
+#else
+    LOG_INF("Using default configuration (device tree node not found)");
+    LOG_INF("  - Target layer: %d", LAYER_LED_TARGET_LAYER);
+    LOG_INF("  - Blink count: %d", LAYER_LED_BLINK_COUNT);
+    LOG_INF("  - Blink interval: %d ms", LAYER_LED_BLINK_INTERVAL_MS);
+    LOG_INF("  - Blink duration: %d ms", LAYER_LED_BLINK_DURATION_MS);
+#endif
     
     // Initialize manager structure
     memset(&manager, 0, sizeof(manager));
@@ -198,22 +229,24 @@ static void layer_state_control_led(uint8_t layer, bool state) {
 #if IS_ENABLED(CONFIG_LAYER_STATE_LED_CONTROL)
     LOG_INF("LED Control: layer=%d, state=%s", layer, state ? "active" : "inactive");
     
-    // 只处理第2层激活的情况
-    if (layer == 2 && state) {
-        LOG_INF(">>> Layer 2 ACTIVATED - triggering LED blink <<<");
+    // 检查是否是目标层
+    if (layer == LAYER_LED_TARGET_LAYER && state) {
+        LOG_INF(">>> Layer %d ACTIVATED - triggering LED blink <<<", layer);
         
         // 启动LED闪烁
-        int ret = led_blink(CONFIG_LAYER_LED_BLINK_COUNT,
-                           CONFIG_LAYER_LED_BLINK_INTERVAL_MS,
-                           CONFIG_LAYER_LED_BLINK_DURATION_MS);
+        int ret = led_blink(LAYER_LED_BLINK_COUNT,
+                           LAYER_LED_BLINK_INTERVAL_MS,
+                           LAYER_LED_BLINK_DURATION_MS);
         
         if (ret < 0) {
             LOG_ERR("Failed to start LED blink: %d", ret);
         } else {
+            manager.last_triggered_layer = layer;
+            manager.last_change_timestamp = k_uptime_get();
             LOG_INF("LED blink started successfully");
         }
-    } else if (layer == 2 && !state) {
-        LOG_INF("Layer 2 deactivated");
+    } else if (layer == LAYER_LED_TARGET_LAYER && !state) {
+        LOG_INF("Layer %d deactivated", layer);
     }
 #endif // CONFIG_LAYER_STATE_LED_CONTROL
 }
@@ -229,6 +262,9 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
         return;
     }
     
+    // 记录状态变化前
+    zmk_keymap_layers_state_t old_state = manager.current_state;
+    
     // Update state
     if (ev->state) {
         manager.current_state |= BIT(ev->layer);
@@ -236,13 +272,11 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
         manager.current_state &= ~BIT(ev->layer);
     }
     
-    // Log the change
-#if CONFIG_LAYER_STATE_DEBUG_LOG
-    LOG_DBG("Layer %d %s (total active: 0x%08X)", 
+    LOG_INF("State updated: layer=%d, new_state=%s, old_bitmask=0x%08X, new_bitmask=0x%08X",
            ev->layer,
-           ev->state ? "ACTIVATED" : "DEACTIVATED",
+           ev->state ? "active" : "inactive",
+           old_state,
            manager.current_state);
-#endif
 }
 
 /**
@@ -251,8 +285,10 @@ static void layer_state_update(const struct zmk_layer_state_changed *ev) {
  * @param ev Layer state changed event.
  */
 static void layer_state_notify_callbacks(const struct zmk_layer_state_changed *ev) {
+    LOG_INF("Notifying %d callbacks", manager.callback_count);
     for (int i = 0; i < manager.callback_count; i++) {
         if (manager.callbacks[i].callback) {
+            LOG_INF("  Calling callback %d", i);
             manager.callbacks[i].callback(ev->layer, ev->state, 
                                           manager.callbacks[i].user_data);
         }
@@ -266,13 +302,16 @@ static void layer_state_notify_callbacks(const struct zmk_layer_state_changed *e
  * @return int Event handling result.
  */
 static int on_layer_state_changed(const zmk_event_t *eh) {
+    LOG_INF("=== LAYER STATE CHANGED EVENT RECEIVED ===");
+    
     const struct zmk_layer_state_changed *ev = as_zmk_layer_state_changed(eh);
     
     if (ev != NULL) {
         // Log the event
-        LOG_INF("Layer state change: layer=%d, state=%s, timestamp=%lld",
+        LOG_INF("Layer state change EVENT: layer=%d, state=%s, locked=%d, timestamp=%lld",
                ev->layer,
                ev->state ? "active" : "inactive",
+               ev->locked,
                ev->timestamp);
         
         // Update internal state
@@ -285,12 +324,14 @@ static int on_layer_state_changed(const zmk_event_t *eh) {
         layer_state_notify_callbacks(ev);
         
         // Print updated state for debugging
-        if (CONFIG_LAYER_STATE_LOG_LEVEL >= LOG_LEVEL_DBG) {
-            layer_state_print_current();
-        }
+        LOG_INF("Post-event state:");
+        layer_state_print_current();
+    } else {
+        LOG_ERR("Failed to cast layer state changed event!");
     }
     
     // Allow other listeners to process the event
+    LOG_INF("Event processing complete, returning ZMK_EV_EVENT_BUBBLE");
     return ZMK_EV_EVENT_BUBBLE;
 }
 

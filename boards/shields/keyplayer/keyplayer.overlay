@@ -88,12 +88,26 @@
     //    status = "okay";
     //};
 
-    // LED节点
     leds {
         compatible = "gpio-leds";
         layer_indicator: layer_indicator {
             gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06, 高电平点亮
             label = "Layer Indicator LED";
+        };
+    };
+
+    layer_state_manager {
+        compatible = "zmk,layer-state-manager";
+        status = "okay";
+        
+        led = <&layer_indicator>;
+        
+        // 层2的LED配置
+        led-blinking {
+            layer = <2>;
+            count = <5>;
+            interval-ms = <500>;
+            duration-ms = <200>;
         };
     };
 };

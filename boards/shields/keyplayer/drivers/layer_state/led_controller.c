@@ -7,16 +7,22 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/devicetree.h>
 #include "led_controller.h"
 
 LOG_MODULE_REGISTER(led_controller, CONFIG_LAYER_STATE_LOG_LEVEL);
 
-// LED状态机
-typedef enum {
-    LED_STATE_OFF,
-    LED_STATE_ON,
-    LED_STATE_BLINKING,
-} led_state_t;
+// 设备树配置
+#define LED_NODE DT_NODELABEL(layer_indicator)
+
+// 检查设备树节点是否存在
+#if DT_NODE_EXISTS(LED_NODE)
+    #define LED_DEVICE DT_GPIO_LABEL(LED_NODE, gpios)
+    #define LED_PIN    DT_GPIO_PIN(LED_NODE, gpios)
+    #define LED_FLAGS  DT_GPIO_FLAGS(LED_NODE, gpios)
+#else
+    #error "Layer indicator LED node not defined in device tree"
+#endif
 
 // LED控制结构
 struct led_controller {
@@ -24,7 +30,7 @@ struct led_controller {
     gpio_pin_t pin;
     gpio_flags_t flags;
     
-    led_state_t state;
+    enum led_state state;
     struct k_work_delayable blink_work;
     uint8_t blink_count;
     uint8_t blink_remaining;
@@ -41,42 +47,24 @@ static struct led_controller led_ctrl;
  * @return int 0 on success, negative error code on failure.
  */
 static int led_gpio_init(void) {
-    LOG_INF("Initializing LED GPIO for P1.06 (pin 38)...");
+    LOG_INF("Initializing LED from device tree...");
     
-    // 尝试查找GPIO设备
-    const char* gpio_names[] = {
-        "gpio1",     // 首选：GPIO1对应P1端口
-        "GPIO_1",    // 备用1
-        "GPIO1",     // 备用2
-        "gpio0",     // 备用3
-        "GPIO_0",    // 备用4
-        "GPIO0",     // 备用5
-        NULL
-    };
-    
-    for (int i = 0; gpio_names[i] != NULL; i++) {
-        LOG_INF("Trying GPIO device: %s", gpio_names[i]);
-        led_ctrl.gpio_dev = device_get_binding(gpio_names[i]);
-        if (led_ctrl.gpio_dev != NULL) {
-            LOG_INF("Found GPIO device: %s", gpio_names[i]);
-            break;
-        }
-    }
-    
+    // 从设备树获取GPIO设备
+    led_ctrl.gpio_dev = device_get_binding(LED_DEVICE);
     if (led_ctrl.gpio_dev == NULL) {
-        LOG_ERR("No GPIO device found!");
+        LOG_ERR("Failed to get GPIO device: %s", LED_DEVICE);
         return -ENODEV;
     }
     
-    // 配置引脚为输出
-    led_ctrl.pin = CONFIG_LAYER_LED_GPIO_PIN;  // GPIO 38
+    led_ctrl.pin = LED_PIN;
     led_ctrl.flags = GPIO_OUTPUT;
     
-    if (CONFIG_LAYER_LED_ACTIVE_HIGH) {
-        led_ctrl.flags |= GPIO_OUTPUT_INIT_LOW;  // 初始低电平
+    // 从设备树获取GPIO标志
+    if (LED_FLAGS & GPIO_ACTIVE_HIGH) {
+        led_ctrl.flags |= GPIO_OUTPUT_INIT_LOW;
         LOG_INF("LED active high (1=ON, 0=OFF)");
     } else {
-        led_ctrl.flags |= GPIO_OUTPUT_INIT_HIGH;  // 初始高电平
+        led_ctrl.flags |= GPIO_OUTPUT_INIT_HIGH;
         LOG_INF("LED active low (0=ON, 1=OFF)");
     }
     
@@ -86,10 +74,10 @@ static int led_gpio_init(void) {
         return ret;
     }
     
-    LOG_INF("LED GPIO initialized successfully");
-    LOG_INF("  - Device: %s", device_get_name(led_ctrl.gpio_dev));
-    LOG_INF("  - Pin: %d (P1.06)", led_ctrl.pin);
-    LOG_INF("  - Active: %s", CONFIG_LAYER_LED_ACTIVE_HIGH ? "high" : "low");
+    LOG_INF("LED GPIO initialized from device tree");
+    LOG_INF("  - Device: %s", LED_DEVICE);
+    LOG_INF("  - Pin: %d", LED_PIN);
+    LOG_INF("  - Flags: 0x%08X", LED_FLAGS);
     
     return 0;
 }
@@ -107,7 +95,7 @@ static int led_set(bool on) {
     }
     
     int value = on ? 1 : 0;
-    if (!CONFIG_LAYER_LED_ACTIVE_HIGH) {
+    if (!(LED_FLAGS & GPIO_ACTIVE_HIGH)) {
         value = !value;  // 反转电平
     }
     
@@ -148,22 +136,20 @@ static void led_blink_work_handler(struct k_work *work) {
         // 如果还有更多闪烁，安排下一次
         if (led_ctrl.blink_remaining > 0) {
             uint32_t off_time = led_ctrl.blink_interval_ms - led_ctrl.blink_duration_ms;
-            LOG_DBG("Waiting %d ms before next blink", off_time);
             k_work_schedule(dwork, K_MSEC(off_time));
         }
     } else {
         // 闪烁灭阶段结束，开始下一个闪烁
         if (led_ctrl.blink_remaining > 0) {
             LOG_DBG("Starting blink %d/%d", 
-                   CONFIG_LAYER_LED_BLINK_COUNT - led_ctrl.blink_remaining + 1,
-                   CONFIG_LAYER_LED_BLINK_COUNT);
+                   led_ctrl.blink_count - led_ctrl.blink_remaining + 1,
+                   led_ctrl.blink_count);
             
             led_on();
             led_ctrl.blink_on_phase = true;
             led_ctrl.blink_remaining--;
             
             // 安排关闭LED
-            LOG_DBG("LED will turn off in %d ms", led_ctrl.blink_duration_ms);
             k_work_schedule(dwork, K_MSEC(led_ctrl.blink_duration_ms));
         }
     }
@@ -174,9 +160,10 @@ static void led_blink_work_handler(struct k_work *work) {
  * 
  * @return int 0 on success, negative error code on failure.
  */
-int led_controller_init(void) {
+int led_controller_init(const struct device *dev) {
+    ARG_UNUSED(dev);
+    
     LOG_INF("=== LED CONTROLLER INITIALIZATION ===");
-    LOG_INF("Hardware: P1.06 (GPIO pin 38), Active High");
     
     // 初始化结构
     memset(&led_ctrl, 0, sizeof(led_ctrl));
@@ -199,9 +186,9 @@ int led_controller_init(void) {
     LOG_INF("Testing LED functionality...");
     for (int i = 0; i < 2; i++) {
         led_on();
-        k_msleep(100);
+        k_msleep(50);
         led_off();
-        k_msleep(100);
+        k_msleep(50);
     }
     
     LOG_INF("LED controller initialized SUCCESSFULLY");
@@ -255,7 +242,7 @@ int led_toggle(void) {
     }
     
     bool current_on = (value != 0);
-    if (!CONFIG_LAYER_LED_ACTIVE_HIGH) {
+    if (!(LED_FLAGS & GPIO_ACTIVE_HIGH)) {
         current_on = !current_on;
     }
     
@@ -337,8 +324,8 @@ bool led_is_blinking(void) {
 /**
  * @brief Get the current LED state.
  * 
- * @return led_state_t Current LED state.
+ * @return enum led_state Current LED state.
  */
-led_state_t led_get_state(void) {
+enum led_state led_get_state(void) {
     return led_ctrl.state;
 }
