@@ -79,13 +79,16 @@
     //    };
     //};
 
-    charging_monitor: charging_monitor {
-        compatible = "zmk,charging-monitor";
-        chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09, 低电平有效
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06, 高电平亮
-        poll-interval-ms = <500>;                 // 每500ms检查一次
-        status = "okay";
-    };
+	charging_monitor: charging_monitor {
+		compatible = "zmk,gpio";
+		status = "okay";
+		
+		/* TP4056 CHRG pin - P1.09 with internal pull-up */
+		chrg_gpios = <&gpio1 9 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		
+		/* Charging indicator LED - P1.06 */
+		led_gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
+	};
 
     //layer_led_indicator {
     //    compatible = "zmk,behavior-layer-led-indicator";
