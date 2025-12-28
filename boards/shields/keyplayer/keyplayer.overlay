@@ -1,7 +1,7 @@
 #include <dt-bindings/zmk/matrix_transform.h>
 #include <dt-bindings/led/led.h>
 #include "keyplayer.dtsi"
-
+#include "keyplayer-layouts.dtsi"
 
 
 &physical_layout0 {
