@@ -1,0 +1,22 @@
+description: ZMK Charging Status Monitor
+
+compatible: "zmk,charging-monitor"
+
+include: base.yaml
+
+properties:
+  chrg-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin connected to TP4056 CHRG pin
+    
+  led-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin for charging indicator LED
+    
+  poll-interval-ms:
+    type: int
+    required: false
+    default: 1000
+    description: Polling interval in milliseconds

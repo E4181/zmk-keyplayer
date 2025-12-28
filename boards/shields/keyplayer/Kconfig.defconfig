@@ -16,10 +16,17 @@ config LED_PWM
 endif # ZMK_BACKLIGHT
 
 config ZMK_CHARGING_MONITOR
-    bool "Enable charging monitor"
+    bool "Charging status monitor"
     default y
     help
-      Enable monitoring of battery charging status.
+      Enable monitoring of TP4056 charging status.
+      
+config ZMK_CHARGING_MONITOR_POLL_INTERVAL
+    int "Charging status poll interval (ms)"
+    default 500
+    depends on ZMK_CHARGING_MONITOR
+    help
+      Polling interval for checking charging status in milliseconds.
 
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"

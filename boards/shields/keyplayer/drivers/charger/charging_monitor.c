@@ -1,84 +1,142 @@
 /*
+ * Copyright (c) 2024 Your Name
  * SPDX-License-Identifier: MIT
  */
 
-#include <zephyr/kernel.h>
+#define DT_DRV_COMPAT zmk_charging_monitor
+
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/sensor.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zmk/events/activity_state_changed.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-/* 设备树匹配 */
-#define CHARGING_MONITOR_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zmk_charging_monitor)
-
 struct charging_monitor_config {
-    struct gpio_dt_spec chrg_gpio;
-    struct gpio_dt_spec led_gpio;
+    struct gpio_dt_spec chrg_gpio;   // TP4056 CHRG引脚
+    struct gpio_dt_spec led_gpio;    // 指示灯LED引脚
+    int poll_interval_ms;            // 轮询间隔
 };
 
-/* 设备数据 */
 struct charging_monitor_data {
-    struct gpio_callback chrg_cb_data;
-    struct k_work_delayable monitor_work;
+    const struct device *dev;
+    struct k_work_delayable work;
     bool is_charging;
-    const struct device *dev;  // 添加dev成员
+    struct sensor_trigger trigger;
+    sensor_trigger_handler_t trigger_handler;
 };
 
-/* 工作队列函数 */
-static void charging_monitor_work_handler(struct k_work *work) {
-    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
-    struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, monitor_work);
-    const struct device *dev = data->dev;  // 使用data->dev
+static int charging_monitor_sample_fetch(const struct device *dev, enum sensor_channel chan) {
+    // 此函数用于获取传感器数据
+    // 对于充电监控，我们不需要复杂的采样，状态变化时直接更新
+    return 0;
+}
+
+static int charging_monitor_channel_get(const struct device *dev,
+                                       enum sensor_channel chan,
+                                       struct sensor_value *val) {
+    struct charging_monitor_data *data = dev->data;
+    
+    if (chan != SENSOR_CHAN_GAUGE_CHARGING_STATUS) {
+        return -ENOTSUP;
+    }
+    
+    // 返回充电状态：1=充电中，0=未充电
+    val->val1 = data->is_charging ? 1 : 0;
+    val->val2 = 0;
+    
+    return 0;
+}
+
+static int charging_monitor_trigger_set(const struct device *dev,
+                                       const struct sensor_trigger *trig,
+                                       sensor_trigger_handler_t handler) {
+    struct charging_monitor_data *data = dev->data;
+    
+    if (trig->type != SENSOR_TRIG_CHARGING_STATUS_CHANGE) {
+        return -ENOTSUP;
+    }
+    
+    data->trigger = *trig;
+    data->trigger_handler = handler;
+    
+    return 0;
+}
+
+static void update_led_state(const struct device *dev, bool charging) {
     const struct charging_monitor_config *config = dev->config;
     
-    int chrg_state = gpio_pin_get_dt(&config->chrg_gpio);
-    
-    if (chrg_state < 0) {
-        LOG_ERR("Failed to read CHRG pin: %d", chrg_state);
+    if (!device_is_ready(config->led_gpio.port)) {
+        LOG_ERR("LED GPIO device not ready");
         return;
     }
     
-    bool new_charging_state = (chrg_state == 0); // CHRG低电平表示正在充电
+    int ret = gpio_pin_set_dt(&config->led_gpio, charging ? 1 : 0);
+    if (ret < 0) {
+        LOG_ERR("Failed to set LED state: %d", ret);
+    }
+}
+
+static void check_charging_status(const struct device *dev) {
+    const struct charging_monitor_config *config = dev->config;
+    struct charging_monitor_data *data = dev->data;
+    
+    if (!device_is_ready(config->chrg_gpio.port)) {
+        LOG_ERR("CHRG GPIO device not ready");
+        return;
+    }
+    
+    // 读取CHRG引脚状态
+    int state = gpio_pin_get_dt(&config->chrg_gpio);
+    if (state < 0) {
+        LOG_ERR("Failed to read CHRG pin: %d", state);
+        return;
+    }
+    
+    // TP4056: 充电时CHRG为低电平，不充电时为高电平/高阻态
+    // 假设电路中有上拉电阻，所以高电平=不充电，低电平=充电
+    bool new_charging_state = (state == 0); // 低电平表示充电中
     
     if (data->is_charging != new_charging_state) {
         data->is_charging = new_charging_state;
         
-        /* 控制LED */
-        int ret = gpio_pin_set_dt(&config->led_gpio, new_charging_state ? 1 : 0);
-        if (ret < 0) {
-            LOG_ERR("Failed to set LED: %d", ret);
-        }
+        LOG_INF("Charging status changed: %s", 
+                new_charging_state ? "Charging" : "Not charging");
         
-        LOG_INF("Charging state changed: %s", new_charging_state ? "CHARGING" : "NOT CHARGING");
+        // 更新LED状态
+        update_led_state(dev, new_charging_state);
+        
+        // 触发事件（如果有注册的handler）
+        if (data->trigger_handler) {
+            sensor_trigger_handler_t handler = data->trigger_handler;
+            handler(dev, &data->trigger);
+        }
     }
-    
-    /* 继续监控（每500ms检查一次） */
-    k_work_reschedule(&data->monitor_work, K_MSEC(500));
 }
 
-/* 充电状态中断回调 */
-static void charging_state_changed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
-    struct charging_monitor_data *data = CONTAINER_OF(cb, struct charging_monitor_data, chrg_cb_data);
+static void charging_monitor_work_handler(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, work);
     
-    /* 立即触发工作队列处理 */
-    k_work_reschedule(&data->monitor_work, K_NO_WAIT);
+    check_charging_status(data->dev);
+    
+    // 重新调度工作
+    const struct charging_monitor_config *config = data->dev->config;
+    k_work_reschedule(&data->work, K_MSEC(config->poll_interval_ms));
 }
 
-/* 初始化函数 */
 static int charging_monitor_init(const struct device *dev) {
-    const struct charging_monitor_config *config = dev->config;
     struct charging_monitor_data *data = dev->data;
+    const struct charging_monitor_config *config = dev->config;
     
-    data->dev = dev;  // 存储设备指针
+    data->dev = dev;
     data->is_charging = false;
     
-    LOG_DBG("Initializing charging monitor");
-    
-    /* 初始化CHRG引脚为输入 */
-    if (!gpio_is_ready_dt(&config->chrg_gpio)) {
-        LOG_ERR("CHRG GPIO not ready");
+    // 初始化CHRG引脚
+    if (!device_is_ready(config->chrg_gpio.port)) {
+        LOG_ERR("CHRG GPIO device not ready");
         return -ENODEV;
     }
     
@@ -88,52 +146,55 @@ static int charging_monitor_init(const struct device *dev) {
         return ret;
     }
     
-    /* 初始化LED引脚为输出 */
-    if (!gpio_is_ready_dt(&config->led_gpio)) {
-        LOG_ERR("LED GPIO not ready");
+    // 初始化LED引脚
+    if (!device_is_ready(config->led_gpio.port)) {
+        LOG_ERR("LED GPIO device not ready");
         return -ENODEV;
     }
     
-    ret = gpio_pin_configure_dt(&config->led_gpio, GPIO_OUTPUT_INACTIVE);
+    ret = gpio_pin_configure_dt(&config->led_gpio, GPIO_OUTPUT);
     if (ret < 0) {
         LOG_ERR("Failed to configure LED pin: %d", ret);
         return ret;
     }
     
-    /* 设置中断回调 */
-    ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio, GPIO_INT_EDGE_BOTH);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure interrupt: %d", ret);
-        // 即使中断配置失败，仍然可以继续使用轮询方式
-    } else {
-        gpio_init_callback(&data->chrg_cb_data, charging_state_changed, BIT(config->chrg_gpio.pin));
-        gpio_add_callback(config->chrg_gpio.port, &data->chrg_cb_data);
-        LOG_DBG("GPIO interrupt configured");
-    }
+    // 初始关闭LED
+    gpio_pin_set_dt(&config->led_gpio, 0);
     
-    /* 初始化工作队列 */
-    k_work_init_delayable(&data->monitor_work, charging_monitor_work_handler);
+    // 初始化工作队列
+    k_work_init_delayable(&data->work, charging_monitor_work_handler);
     
-    /* 启动第一次监控 */
-    k_work_reschedule(&data->monitor_work, K_NO_WAIT);
+    // 立即检查一次状态
+    check_charging_status(dev);
+    
+    // 开始定期检查
+    k_work_reschedule(&data->work, K_MSEC(config->poll_interval_ms));
     
     LOG_INF("Charging monitor initialized");
+    
     return 0;
 }
 
-#define CHARGING_MONITOR_DEVICE_INIT(n) \
+static const struct sensor_driver_api charging_monitor_api = {
+    .sample_fetch = charging_monitor_sample_fetch,
+    .channel_get = charging_monitor_channel_get,
+    .trigger_set = charging_monitor_trigger_set,
+};
+
+#define CHARGING_MONITOR_INIT(n) \
     static struct charging_monitor_data charging_monitor_data_##n; \
     static const struct charging_monitor_config charging_monitor_config_##n = { \
-        .chrg_gpio = GPIO_DT_SPEC_GET(DT_NODELABEL(charging_monitor), chrg_gpio), \
-        .led_gpio = GPIO_DT_SPEC_GET(DT_NODELABEL(charging_monitor), led_gpio), \
+        .chrg_gpio = GPIO_DT_SPEC_INST_GET(n, chrg_gpios), \
+        .led_gpio = GPIO_DT_SPEC_INST_GET(n, led_gpios), \
+        .poll_interval_ms = DT_INST_PROP(n, poll_interval_ms), \
     }; \
-    DEVICE_DT_DEFINE(DT_NODELABEL(charging_monitor), \
-                    charging_monitor_init, \
-                    NULL, \
-                    &charging_monitor_data_##n, \
-                    &charging_monitor_config_##n, \
-                    POST_KERNEL, \
-                    CONFIG_APPLICATION_INIT_PRIORITY, \
-                    NULL);
+    DEVICE_DT_INST_DEFINE(n, \
+                         charging_monitor_init, \
+                         NULL, \
+                         &charging_monitor_data_##n, \
+                         &charging_monitor_config_##n, \
+                         POST_KERNEL, \
+                         CONFIG_SENSOR_INIT_PRIORITY, \
+                         &charging_monitor_api);
 
-CHARGING_MONITOR_DEVICE_INIT(0)
+DT_INST_FOREACH_STATUS_OKAY(CHARGING_MONITOR_INIT)
