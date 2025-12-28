@@ -7,4 +7,5 @@ requires: [nrfmicro_13_52840]
 features:
   - keys
   - underglow
+  - studio
   #- backlight
