@@ -15,17 +15,11 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
-DT_COMPAT_ZMK_TP4056_CHARGER := zmk,tp4056-charger
-
-config ZMK_BATTERY_TP4056_CHARGER
-    bool "TP4056 Charger Status Sensor"
-    default $(dt_compat_enabled,$(DT_COMPAT_ZMK_TP4056_CHARGER))
-    select ZMK_SENSOR
-    select SENSOR
+config ZMK_CHARGING_MONITOR
+    bool "Enable charging monitor"
+    default y
     help
-        Enable TP4056 charger status detection via CHRG pin with LED indicator.
-
-        
+      Enable monitoring of battery charging status.
 
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"

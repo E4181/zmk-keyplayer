@@ -17,6 +17,7 @@
 		zmk,underglow = &led_strip;
         //zmk,backlight = &backlight;
         zmk,battery = &vbatt;
+        zmk,charging-monitor = &charging_monitor;
     };
 
     vbatt: vbatt {
@@ -80,16 +81,11 @@
     //    };
     //};
 
-    sensors {
-        compatible = "zmk,keymap-sensors";
-        
-        tp4056_charger: tp4056_charger {
-            compatible = "zmk,tp4056-charger";
-            label = "TP4056_CHARGER";
-            chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 - CHRG引脚（低电平有效）
-            led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 - LED引脚（高电平点亮）
-            debounce-ms = <50>;
-        };
+    charging_monitor: charging_monitor {
+        compatible = "zmk,charging-monitor";
+        chrg-gpio = <&gpio1 9 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        led-gpio = <&gpio1 6 GPIO_ACTIVE_HIGH>;
+        label = "CHARGING_MONITOR";
     };
 
     //layer_led_indicator {
