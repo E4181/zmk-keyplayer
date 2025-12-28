@@ -16,7 +16,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 struct charging_monitor_config {
     struct gpio_dt_spec chrg_gpio;
     struct gpio_dt_spec led_gpio;
-    const char *label;
 };
 
 /* 设备数据 */
@@ -24,13 +23,14 @@ struct charging_monitor_data {
     struct gpio_callback chrg_cb_data;
     struct k_work_delayable monitor_work;
     bool is_charging;
+    const struct device *dev;  // 添加dev成员
 };
 
 /* 工作队列函数 */
 static void charging_monitor_work_handler(struct k_work *work) {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
     struct charging_monitor_data *data = CONTAINER_OF(dwork, struct charging_monitor_data, monitor_work);
-    const struct device *dev = data->dev;
+    const struct device *dev = data->dev;  // 使用data->dev
     const struct charging_monitor_config *config = dev->config;
     
     int chrg_state = gpio_pin_get_dt(&config->chrg_gpio);
@@ -71,10 +71,10 @@ static int charging_monitor_init(const struct device *dev) {
     const struct charging_monitor_config *config = dev->config;
     struct charging_monitor_data *data = dev->data;
     
-    data->dev = dev;
+    data->dev = dev;  // 存储设备指针
     data->is_charging = false;
     
-    LOG_DBG("Initializing charging monitor on %s", config->label);
+    LOG_DBG("Initializing charging monitor");
     
     /* 初始化CHRG引脚为输入 */
     if (!gpio_is_ready_dt(&config->chrg_gpio)) {
@@ -104,11 +104,12 @@ static int charging_monitor_init(const struct device *dev) {
     ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio, GPIO_INT_EDGE_BOTH);
     if (ret < 0) {
         LOG_ERR("Failed to configure interrupt: %d", ret);
-        return ret;
+        // 即使中断配置失败，仍然可以继续使用轮询方式
+    } else {
+        gpio_init_callback(&data->chrg_cb_data, charging_state_changed, BIT(config->chrg_gpio.pin));
+        gpio_add_callback(config->chrg_gpio.port, &data->chrg_cb_data);
+        LOG_DBG("GPIO interrupt configured");
     }
-    
-    gpio_init_callback(&data->chrg_cb_data, charging_state_changed, BIT(config->chrg_gpio.pin));
-    gpio_add_callback(config->chrg_gpio.port, &data->chrg_cb_data);
     
     /* 初始化工作队列 */
     k_work_init_delayable(&data->monitor_work, charging_monitor_work_handler);
@@ -120,19 +121,19 @@ static int charging_monitor_init(const struct device *dev) {
     return 0;
 }
 
-/* 设备定义 */
-static struct charging_monitor_data charging_monitor_data;
-static const struct charging_monitor_config charging_monitor_config = {
-    .chrg_gpio = GPIO_DT_SPEC_GET(CHARGING_MONITOR_NODE, chrg_gpio),
-    .led_gpio = GPIO_DT_SPEC_GET(CHARGING_MONITOR_NODE, led_gpio),
-    .label = DT_LABEL(CHARGING_MONITOR_NODE),
-};
+#define CHARGING_MONITOR_DEVICE_INIT(n) \
+    static struct charging_monitor_data charging_monitor_data_##n; \
+    static const struct charging_monitor_config charging_monitor_config_##n = { \
+        .chrg_gpio = GPIO_DT_SPEC_GET(DT_NODELABEL(charging_monitor), chrg_gpio), \
+        .led_gpio = GPIO_DT_SPEC_GET(DT_NODELABEL(charging_monitor), led_gpio), \
+    }; \
+    DEVICE_DT_DEFINE(DT_NODELABEL(charging_monitor), \
+                    charging_monitor_init, \
+                    NULL, \
+                    &charging_monitor_data_##n, \
+                    &charging_monitor_config_##n, \
+                    POST_KERNEL, \
+                    CONFIG_APPLICATION_INIT_PRIORITY, \
+                    NULL);
 
-DEVICE_DT_DEFINE(CHARGING_MONITOR_NODE,
-                 charging_monitor_init,
-                 NULL,
-                 &charging_monitor_data,
-                 &charging_monitor_config,
-                 POST_KERNEL,
-                 CONFIG_APPLICATION_INIT_PRIORITY,
-                 NULL);
+CHARGING_MONITOR_DEVICE_INIT(0)
