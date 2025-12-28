@@ -15,53 +15,17 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
-menuconfig ZMK_CHARGER
-    bool "Charger detection support"
-    default y
+DT_COMPAT_ZMK_TP4056_CHARGER := zmk,tp4056-charger
+
+config ZMK_BATTERY_TP4056_CHARGER
+    bool "TP4056 Charger Status Sensor"
+    default $(dt_compat_enabled,$(DT_COMPAT_ZMK_TP4056_CHARGER))
+    select ZMK_SENSOR
+    select SENSOR
     help
-      Enable TP4056 charger detection support
+        Enable TP4056 charger status detection via CHRG pin with LED indicator.
 
-menuconfig ZMK_CHARGER
-    bool "Charger detection support"
-    default y
-    help
-      Enable TP4056 charger detection support
-
-if ZMK_CHARGER
-
-config ZMK_CHARGER_TP4056
-    bool "TP4056 Charger detection"
-    depends on GPIO
-    default y
-    help
-      Enable TP4056 charger detection via CHRG pin
-
-config ZMK_CHARGER_LOG_LEVEL
-    int "Charger log level"
-    depends on ZMK_CHARGER_TP4056
-    default 2 if ZMK_LOG_LEVEL_DBG
-    default 1 if ZMK_LOG_LEVEL_INF
-    default 0
-    range 0 4
-    help
-      Set log level for charger module.
-      0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
-
-config ZMK_CHARGER_DEBOUNCE_MS
-    int "Debounce time in milliseconds"
-    default 100
-    depends on ZMK_CHARGER_TP4056
-    help
-      Debounce time for charger status changes
-
-config ZMK_CHARGER_LED_INDICATOR
-    bool "LED indicator for charger status"
-    depends on ZMK_CHARGER_TP4056
-    default y
-    help
-      Enable LED indicator for charging status
-
-endif # ZMK_CHARGER
+        
 
 menuconfig ZMK_LAYER_STATE_MANAGER
     bool "Layer State Manager"

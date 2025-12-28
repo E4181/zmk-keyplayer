@@ -1,0 +1,28 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: ZMK TP4056 Charger Status Sensor
+
+compatible: "zmk,tp4056-charger"
+
+include: [base.yaml, gpio.yaml]
+
+properties:
+  chrg-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin for TP4056 CHRG signal (active low)
+
+  led-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO pin for LED indicator
+
+  debounce-ms:
+    type: int
+    required: false
+    description: Debounce time in milliseconds
+    default: 50
+
+child-binding:
+  description: TP4056 charger sensor

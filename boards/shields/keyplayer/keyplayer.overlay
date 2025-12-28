@@ -80,12 +80,16 @@
     //    };
     //};
 
-    charger: charger {
-        compatible = "zmk,charger-tp4056";
-        chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 充电检测引脚
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 LED引脚
-        debounce-ms = <100>;
-        status = "okay";
+    sensors {
+        compatible = "zmk,keymap-sensors";
+        
+        tp4056_charger: tp4056_charger {
+            compatible = "zmk,tp4056-charger";
+            label = "TP4056_CHARGER";
+            chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 - CHRG引脚（低电平有效）
+            led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 - LED引脚（高电平点亮）
+            debounce-ms = <50>;
+        };
     };
 
     //layer_led_indicator {
