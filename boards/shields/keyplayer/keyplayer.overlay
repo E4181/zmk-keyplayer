@@ -80,27 +80,24 @@
     //    };
     //};
 
-    //charger: charger {
-    //    compatible = "zmk,charger-tp4056";
-    //    chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 充电检测引脚
-    //    led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 LED引脚
-    //    debounce-ms = <100>;
-    //    status = "okay";
-    //};
-
-    layer_led_indicator {
-        compatible = "zmk,behavior-layer-led-indicator";
-        #binding-cells = <0>;  // 关键：添加这行
-        
-        // 使用NRF52840的P1.06引脚
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
-        
-        // 配置参数
-        target-layer = <2>;            // 切换到第2层时触发
-        blink-count = <5>;             // 闪烁5次
-        blink-period-ms = <1000>;      // 每次闪烁周期1000ms（慢速）
-        on-duration-ms = <100>;        // 亮100ms
-        
+    charger: charger {
+        compatible = "zmk,charger-tp4056";
+        chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;  // P1.09 充电检测引脚
+        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06 LED引脚
+        debounce-ms = <100>;
         status = "okay";
     };
+
+    //layer_led_indicator {
+    //    compatible = "zmk,behavior-layer-led-indicator";
+    //    #binding-cells = <0>;  // 关键：添加这行
+    //    // 使用NRF52840的P1.06引脚
+    //    led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
+    //    // 配置参数
+    //    target-layer = <2>;            // 切换到第2层时触发
+    //    blink-count = <5>;             // 闪烁5次
+    //    blink-period-ms = <1000>;      // 每次闪烁周期1000ms（慢速）
+    //    on-duration-ms = <100>;        // 亮100ms
+    //    status = "okay";
+    //};
 };
