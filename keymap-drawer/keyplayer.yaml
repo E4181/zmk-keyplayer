@@ -32,7 +32,7 @@ layers:
   - '['
   - ']'
   - \
-  - {t: MacBook, h: toggle}
+  - RGB TOG
   - {t: MacBook, h: toggle}
   - CAPSLOCK
   - A
@@ -47,7 +47,7 @@ layers:
   - ;
   - ''''
   - ENTER
-  - MacBook
+  - RGB EFR
   - LSHFT
   - Z
   - X
@@ -67,7 +67,7 @@ layers:
   - SPACE
   - SPACE
   - RALT
-  - RGUI
+  - Function
   - RCTRL
   - LEFT
   - DOWN
@@ -119,7 +119,7 @@ layers:
   - ;
   - ''''
   - ENTER
-  - {t: Function, type: held}
+  - Function
   - LSHFT
   - Z
   - X
@@ -139,7 +139,7 @@ layers:
   - SPACE
   - SPACE
   - RCTRL
-  - RALT
+  - Function
   - RGUI
   - LEFT
   - DOWN
@@ -153,6 +153,8 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
+  - RGB SAI
+  - RGB SAD
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -166,6 +168,24 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
+  - RGB HUI
+  - RGB HUD
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - {t: ▽, type: trans}
+  - RGB BRI
+  - RGB BRD
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -192,26 +212,6 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {type: held}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
