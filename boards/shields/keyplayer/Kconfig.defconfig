@@ -35,7 +35,7 @@ menuconfig CHARGING_MONITOR
     default y
     help
       Enable monitoring of TP4056 charging status via CHRG pin.
-      Includes fault detection and multiple callback support.
+      Includes LED indicator support.
 
 if CHARGING_MONITOR
 
@@ -54,10 +54,38 @@ config CHARGING_MONITOR_INIT_PRIORITY
     help
       Charging monitor device driver initialization priority.
 
-config CHARGING_MONITOR_FAULT_DETECTION
-    bool "Enable fault detection"
+config CHARGING_MONITOR_LED_ENABLE
+    bool "Enable LED indicator"
     default y
     help
-      Enable detection of charging faults such as timeout and bad battery.
+      Enable LED indicator that shows charging status.
+      LED is ON when charging, OFF when not charging.
 
 endif # CHARGING_MONITOR
+
+menuconfig CHARGING_LED
+    bool "Charging Status LED Indicator"
+    default y
+    help
+      Enable LED indicator for charging status.
+      LED is ON when charging, OFF when not charging.
+
+if CHARGING_LED
+
+config CHARGING_LED_LOG_LEVEL
+    int "Log level"
+    range 0 4
+    default 2
+    help
+      Sets log level for charging LED driver.
+      
+      0=OFF, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG
+
+config CHARGING_LED_INIT_PRIORITY
+    int "Init priority"
+    default 91
+    help
+      Charging LED device driver initialization priority.
+      Should be after charging monitor (priority 90).
+
+endif # CHARGING_LED

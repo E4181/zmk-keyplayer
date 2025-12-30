@@ -98,4 +98,11 @@
         debounce-ms = <50>;
         label = "CHARGING_MONITOR";
     };
+    
+    charging_led: charging_led {
+        compatible = "zmk,charging-led";
+        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06, 高电平点亮
+        active-low = <0>;  // 不是低电平有效
+        label = "CHARGING_LED";
+    };
 };

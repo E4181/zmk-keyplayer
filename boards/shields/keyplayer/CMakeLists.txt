@@ -4,5 +4,6 @@ target_sources(app PRIVATE
     #src/battery_better.c
     drivers/charger/charging_monitor.c
     drivers/charger/charging_state_changed.c
+    drivers/charger/charging_led.c
     drivers/layer_state/behavior_layer_led_indicator.c
 )

@@ -21,28 +21,6 @@ properties:
     default: 50
     description: Debounce time in milliseconds for state changes.
 
-  fault-check-interval-ms:
-    type: int
-    default: 60000
-    description: >
-      Interval in milliseconds for checking fault conditions like charging timeout.
-      Default is 1 minute.
-
-  max-charging-minutes:
-    type: int
-    default: 480
-    description: >
-      Maximum allowed charging time in minutes. If charging exceeds this duration,
-      a timeout fault will be triggered. Default is 8 hours (480 minutes).
-
-  max-pulse-per-minute:
-    type: int
-    default: 120
-    description: >
-      Maximum allowed CHRG pin state changes per minute. TP4056 indicates faults
-      by pulsing CHRG pin at about 1Hz (60 changes/minute). Setting a higher
-      threshold (e.g., 120) helps avoid false positives.
-
   label:
     type: string
     description: Human-readable string describing the device.
