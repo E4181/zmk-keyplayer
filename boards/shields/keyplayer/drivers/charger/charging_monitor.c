@@ -33,12 +33,13 @@ struct charging_monitor_data {
     struct k_spinlock callbacks_lock;  // 回调链表自旋锁
     
     // 故障检测相关
-    uint32_t chrg_pulse_count;  // CHRG引脚脉冲计数
+    atomic_t chrg_pulse_count;  // CHRG引脚脉冲计数（使用atomic_t）
     uint32_t chrg_state_changes;  // 状态变化次数
     int64_t charging_start_time;  // 充电开始时间
     bool fault_detected;  // 故障检测标志
     uint32_t max_charging_minutes;  // 最大充电时间（分钟）
     uint32_t max_pulse_count;  // 最大允许脉冲计数
+    int last_pin_state;  // 上一次引脚状态，用于检测变化
 };
 
 struct charging_monitor_config {
@@ -151,10 +152,9 @@ static void detect_fault_conditions(struct charging_monitor_data *data,
                                    int pin_state, int64_t now) {
     
     // 统计状态变化次数（用于故障检测）
-    static int last_pin_state = -1;
-    if (last_pin_state != pin_state) {
+    if (data->last_pin_state != pin_state) {
         data->chrg_state_changes++;
-        last_pin_state = pin_state;
+        data->last_pin_state = pin_state;
         
         // TP4056故障模式检测：如果CHRG引脚快速闪烁（1Hz方波），表示故障
         // 增加脉冲计数
@@ -232,7 +232,11 @@ static int charging_monitor_init(const struct device *dev) {
     data->fault_detected = false;
     data->charging_start_time = 0;
     data->chrg_state_changes = 0;
+    data->last_pin_state = -1;  // 初始化为无效值
     data->max_charging_minutes = config->max_charging_minutes;
+    
+    // 初始化原子计数器
+    atomic_set(&data->chrg_pulse_count, 0);
     
     // 计算每分钟最大允许脉冲数
     // TP4056故障时CHRG引脚以约1Hz闪烁，每分钟约60次状态变化
