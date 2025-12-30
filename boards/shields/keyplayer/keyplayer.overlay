@@ -97,8 +97,5 @@
         chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
         debounce-ms = <50>;
         label = "CHARGING_MONITOR";
-        pinctrl-0 = <&charging_monitor_default>;
-        pinctrl-1 = <&charging_monitor_sleep>;
-        pinctrl-names = "default", "sleep";
     };
 };
