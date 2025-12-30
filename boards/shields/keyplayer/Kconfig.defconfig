@@ -28,3 +28,29 @@ config ZMK_BEHAVIOR_LAYER_LED_INDICATOR
     default y
     help
       Blinks an LED when switching to a specific layer
+
+
+menuconfig CHARGING_MONITOR
+    bool "TP4056 Charging Status Monitor"
+    default y
+    help
+      Enable monitoring of TP4056 charging status via CHRG pin.
+
+if CHARGING_MONITOR
+
+config CHARGING_MONITOR_LOG_LEVEL
+    int "Log level"
+    range 0 4
+    default 2
+    help
+      Sets log level for charging monitor driver.
+      
+      0=OFF, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG
+
+config CHARGING_MONITOR_INIT_PRIORITY
+    int "Init priority"
+    default 90
+    help
+      Charging monitor device driver initialization priority.
+
+endif # CHARGING_MONITOR
