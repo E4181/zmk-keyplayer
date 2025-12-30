@@ -23,20 +23,6 @@
         };
     };
 
-    charging_monitor_default: charging_monitor_default {
-        group1 {
-            psels = <NRF_PSEL(GPIO, 1, 9)>;
-            bias-pull-up;
-        };
-    };
-    
-    charging_monitor_sleep: charging_monitor_sleep {
-        group1 {
-            psels = <NRF_PSEL(GPIO, 1, 9)>;
-            low-power-enable;
-        };
-    };
-
     //pwm0_default: pwm0_default {
     //    group1 {
     //        psels = <NRF_PSEL(PWM_OUT0, 1, 6)>;
