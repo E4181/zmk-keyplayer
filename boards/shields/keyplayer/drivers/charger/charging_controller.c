@@ -39,10 +39,8 @@ static void charging_status_changed_callback(const struct device *charger_dev,
     charging_led_set_charging(led_dev, is_charging);
 }
 
-// 初始化充电控制器
-static int charging_controller_init(const struct device *dev) {
-    (void)dev;  // 未使用
-    
+// 初始化充电控制器 - 修正：使用无参数版本
+static int charging_controller_init(void) {
     LOG_INF("Initializing charging controller...");
     
     const struct device *charger = DEVICE_DT_GET(DT_NODELABEL(charging_monitor));
@@ -61,6 +59,7 @@ static int charging_controller_init(const struct device *dev) {
     if (!device_is_ready(led)) {
         LOG_ERR("Charging LED device not ready");
         // LED不可用，但监控功能仍可工作
+        LOG_WRN("Charging LED not available, continuing without LED indicator");
         return 0;
     }
     
@@ -88,5 +87,5 @@ static int charging_controller_init(const struct device *dev) {
     return 0;
 }
 
-// 在应用层初始化充电控制器
+// 在应用层初始化充电控制器 - 修正：使用正确的函数签名
 SYS_INIT(charging_controller_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
