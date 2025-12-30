@@ -14,8 +14,8 @@
 #include <zephyr/pm/device.h>
 
 #include <zmk/event_manager.h>
-#include <zmk/events/charging_state_changed.h>
-#include <drivers/charger/charging_monitor.h>
+#include "charging_state_changed.h"
+#include "charging_monitor.h"
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
 

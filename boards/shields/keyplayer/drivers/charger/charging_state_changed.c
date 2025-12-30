@@ -5,6 +5,6 @@
  */
 
 #include <zephyr/kernel.h>
-#include <zmk/events/charging_state_changed.h>
+#include "charging_state_changed.h"
 
 ZMK_EVENT_IMPL(charging_state_changed);
