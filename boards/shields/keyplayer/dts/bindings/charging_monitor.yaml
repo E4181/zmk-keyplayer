@@ -23,8 +23,4 @@ properties:
 
   label:
     type: string
-    required: false
     description: Human-readable string describing the device.
-
-required:
-  - chrg-gpios
