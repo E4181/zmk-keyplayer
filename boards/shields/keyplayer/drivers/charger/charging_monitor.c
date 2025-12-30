@@ -14,8 +14,8 @@
 #include <zephyr/pm/device.h>
 
 #include <zmk/event_manager.h>
-#include "charging_state_changed.h"
-#include "charging_monitor.h"
+#include <zmk/events/charging_state_changed.h>
+#include <drivers/charger/charging_monitor.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
 
@@ -80,7 +80,7 @@ static void charging_monitor_work_handler(struct k_work *work) {
                                         data->user_callback.user_data);
         }
         
-        // 修正：使用正确的函数名 raise_charging_state_changed
+        // Raise charging state changed event
         raise_charging_state_changed((struct charging_state_changed){
             .is_charging = (new_status == CHARGING_STATUS_CHARGING),
             .timestamp = k_uptime_get()
@@ -199,22 +199,22 @@ static int charging_monitor_pm_action(const struct device *dev,
 
 #endif /* CONFIG_PM_DEVICE */
 
-// 实现驱动API函数
-enum charging_status charging_monitor_get_status(const struct device *dev) {
+// 驱动API函数实现
+static enum charging_status charging_monitor_get_status_impl(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
     return data->current_status;
 }
 
-bool charging_monitor_is_charging(const struct device *dev) {
+static bool charging_monitor_is_charging_impl(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
     return (data->current_status == CHARGING_STATUS_CHARGING);
 }
 
-int charging_monitor_register_callback(const struct device *dev,
-                                       void (*callback)(const struct device *dev,
-                                                       enum charging_status status,
-                                                       void *user_data),
-                                       void *user_data) {
+static int charging_monitor_register_callback_impl(const struct device *dev,
+                                                   void (*callback)(const struct device *dev,
+                                                                   enum charging_status status,
+                                                                   void *user_data),
+                                                   void *user_data) {
     struct charging_monitor_data *data = dev->data;
     
     if (callback == NULL) {
@@ -230,9 +230,9 @@ int charging_monitor_register_callback(const struct device *dev,
 
 // 定义驱动API结构体
 static const struct charging_monitor_driver_api charging_monitor_api = {
-    .get_status = charging_monitor_get_status,
-    .is_charging = charging_monitor_is_charging,
-    .register_callback = charging_monitor_register_callback,
+    .get_status = charging_monitor_get_status_impl,
+    .is_charging = charging_monitor_is_charging_impl,
+    .register_callback = charging_monitor_register_callback_impl,
 };
 
 #define CHARGING_MONITOR_INIT(n) \

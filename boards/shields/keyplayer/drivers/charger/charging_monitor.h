@@ -44,9 +44,7 @@ __subsystem struct charging_monitor_driver_api {
  * @param dev Charging monitor device instance
  * @return enum charging_status Current charging status
  */
-__syscall enum charging_status charging_monitor_get_status(const struct device *dev);
-
-static inline enum charging_status z_impl_charging_monitor_get_status(const struct device *dev)
+static inline enum charging_status charging_monitor_get_status(const struct device *dev)
 {
     const struct charging_monitor_driver_api *api = dev->api;
 
@@ -59,9 +57,7 @@ static inline enum charging_status z_impl_charging_monitor_get_status(const stru
  * @param dev Charging monitor device instance
  * @return true if charging, false otherwise
  */
-__syscall bool charging_monitor_is_charging(const struct device *dev);
-
-static inline bool z_impl_charging_monitor_is_charging(const struct device *dev)
+static inline bool charging_monitor_is_charging(const struct device *dev)
 {
     const struct charging_monitor_driver_api *api = dev->api;
 
@@ -76,17 +72,11 @@ static inline bool z_impl_charging_monitor_is_charging(const struct device *dev)
  * @param user_data User data passed to callback
  * @return int 0 on success, negative error code on failure
  */
-__syscall int charging_monitor_register_callback(const struct device *dev,
-                                               void (*callback)(const struct device *dev,
-                                                               enum charging_status status,
-                                                               void *user_data),
-                                               void *user_data);
-
-static inline int z_impl_charging_monitor_register_callback(const struct device *dev,
-                                                          void (*callback)(const struct device *dev,
-                                                                          enum charging_status status,
-                                                                          void *user_data),
-                                                          void *user_data)
+static inline int charging_monitor_register_callback(const struct device *dev,
+                                                   void (*callback)(const struct device *dev,
+                                                                   enum charging_status status,
+                                                                   void *user_data),
+                                                   void *user_data)
 {
     const struct charging_monitor_driver_api *api = dev->api;
 
@@ -100,5 +90,3 @@ static inline int z_impl_charging_monitor_register_callback(const struct device 
 #ifdef __cplusplus
 }
 #endif
-
-#include <syscalls/charging_monitor.h>
