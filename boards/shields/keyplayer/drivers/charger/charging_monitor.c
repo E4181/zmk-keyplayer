@@ -9,13 +9,14 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/pinctrl.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
 
 #include <zmk/event_manager.h>
-#include "charging_state_changed.h"
-#include "charging_monitor.h"
+#include <zmk/events/charging_state_changed.h>
+#include <drivers/charging_monitor.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
 
@@ -38,6 +39,9 @@ struct charging_monitor_data {
 struct charging_monitor_config {
     struct gpio_dt_spec chrg_gpio;
     uint32_t debounce_ms;
+#if DT_INST_NODE_HAS_PROP(0, pinctrl_0)
+    const struct pinctrl_dev_config *pcfg;
+#endif
 };
 
 static void charging_monitor_work_handler(struct k_work *work) {
@@ -115,6 +119,20 @@ static int charging_monitor_init(const struct device *dev) {
     data->current_status = CHARGING_STATUS_IDLE;
     data->last_status = CHARGING_STATUS_IDLE;
     data->callback_registered = false;
+
+	#if DT_INST_NODE_HAS_PROP(0, pinctrl_0)
+    // 配置pinctrl
+    ret = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_DEFAULT);
+    if (ret < 0) {
+        LOG_ERR("Failed to configure pinctrl: %d", ret);
+        return ret;
+    }
+#endif
+    
+    if (!device_is_ready(config->chrg_gpio.port)) {
+        LOG_ERR("CHRG GPIO device is not ready");
+        return -ENODEV;
+    }
     
     if (!device_is_ready(config->chrg_gpio.port)) {
         LOG_ERR("CHRG GPIO device is not ready");
@@ -170,7 +188,14 @@ static int charging_monitor_pm_action(const struct device *dev,
     
     switch (action) {
     case PM_DEVICE_ACTION_SUSPEND:
-        // Disable interrupt and disconnect GPIO to save power
+        // 切换到睡眠状态pinctrl配置
+#if DT_INST_NODE_HAS_PROP(0, pinctrl_0)
+        ret = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_SLEEP);
+        if (ret < 0) {
+            LOG_WRN("Failed to apply sleep pinctrl state: %d", ret);
+        }
+#endif
+        // 禁用中断以节省功耗
         ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio, 
                                              GPIO_INT_DISABLE);
         if (ret < 0) {
@@ -179,14 +204,21 @@ static int charging_monitor_pm_action(const struct device *dev,
         return 0;
         
     case PM_DEVICE_ACTION_RESUME:
-        // Re-enable interrupt
+        // 恢复到默认pinctrl配置
+#if DT_INST_NODE_HAS_PROP(0, pinctrl_0)
+        ret = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_DEFAULT);
+        if (ret < 0) {
+            LOG_WRN("Failed to apply default pinctrl state: %d", ret);
+        }
+#endif
+        // 重新启用中断
         ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio,
                                              GPIO_INT_EDGE_BOTH);
         if (ret < 0) {
             LOG_WRN("Failed to enable interrupt on resume: %d", ret);
         }
         
-        // Trigger a fresh read
+        // 触发一次新的读取
         struct charging_monitor_data *data = dev->data;
         k_work_submit(&data->work);
         return 0;
@@ -234,9 +266,15 @@ static const struct charging_monitor_driver_api charging_monitor_api = {
 
 #define CHARGING_MONITOR_INIT(n) \
     static struct charging_monitor_data charging_monitor_data_##n; \
+    \
+    PINCTRL_DT_INST_DEFINE(n); \
+    \
     static const struct charging_monitor_config charging_monitor_config_##n = { \
         .chrg_gpio = GPIO_DT_SPEC_INST_GET(n, chrg_gpios), \
         .debounce_ms = DT_INST_PROP_OR(n, debounce_ms, 50), \
+        COND_CODE_1(DT_INST_NODE_HAS_PROP(n, pinctrl_0), \
+                   (.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),), \
+                   (.pcfg = NULL,)) \
     }; \
     PM_DEVICE_DT_INST_DEFINE(n, charging_monitor_pm_action); \
     DEVICE_DT_INST_DEFINE(n, \

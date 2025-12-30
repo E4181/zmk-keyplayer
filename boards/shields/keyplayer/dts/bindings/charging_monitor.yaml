@@ -1,28 +1,34 @@
+#
 # Copyright (c) 2024 The ZMK Contributors
+#
 # SPDX-License-Identifier: MIT
+#
 
 description: TP4056 Charging Status Monitor
 
 compatible: "zmk,charging-monitor"
 
-include:
-  - name: gpio-device.yaml
-
 properties:
   chrg-gpios:
-    required: true
     type: phandle-array
-    description: |
+    required: true
+    description: >
       GPIO pin connected to TP4056 CHRG pin. Should be configured with
       GPIO_ACTIVE_LOW flag for typical TP4056 behavior.
 
   debounce-ms:
-    required: false
     type: int
     default: 50
     description: Debounce time in milliseconds for state changes.
 
   label:
-    required: false
     type: string
+    required: false
     description: Human-readable string describing the device.
+
+required:
+  - chrg-gpios
+
+---
+# This is the schema for the child nodes of a charging-monitor node.
+# Since we don't have child nodes, we leave it empty but must include the separator.
