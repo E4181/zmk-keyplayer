@@ -25,44 +25,53 @@ struct charging_led_data {
 
 struct charging_led_config {
     struct gpio_dt_spec led_gpio;
-    bool active_low;  // true: LED亮时输出低电平; false: LED亮时输出高电平
+    bool active_low;
 };
 
 static void update_led_state(const struct device *dev, bool charging) {
     const struct charging_led_config *config = dev->config;
     struct charging_led_data *data = dev->data;
     
-    if (!data->enabled || !device_is_ready(config->led_gpio.port)) {
+    LOG_DBG("update_led_state: charging=%d, enabled=%d", charging, data->enabled);
+    
+    if (!data->enabled) {
+        LOG_WRN("LED is disabled, cannot update state");
+        return;
+    }
+    
+    if (!device_is_ready(config->led_gpio.port)) {
+        LOG_ERR("LED GPIO device is not ready");
         return;
     }
     
     // 根据充电状态和极性设置LED
     int led_value = charging ? 1 : 0;
     
+    LOG_DBG("Raw LED value: %d (charging: %d)", led_value, charging);
+    
     // 如果是active_low，需要反转逻辑
     if (config->active_low) {
         led_value = !led_value;
+        LOG_DBG("Active low, inverted LED value: %d", led_value);
     }
+    
+    LOG_INF("Setting LED GPIO %s:%d to %d (active_low: %d)", 
+            config->led_gpio.port->name, config->led_gpio.pin,
+            led_value, config->active_low);
     
     int ret = gpio_pin_set_dt(&config->led_gpio, led_value);
     if (ret < 0) {
         LOG_ERR("Failed to set LED pin: %d", ret);
     } else {
         data->last_charging_state = charging;
-        LOG_DBG("LED %s (charging: %s)", 
+        LOG_INF("LED %s (charging: %s)", 
                 charging ? "ON" : "OFF",
                 charging ? "yes" : "no");
     }
 }
 
 static void charging_led_set_charging_impl(const struct device *dev, bool charging) {
-    struct charging_led_data *data = dev->data;
-    
-    if (!data->enabled) {
-        LOG_WRN("Charging LED is disabled");
-        return;
-    }
-    
+    LOG_INF("charging_led_set_charging called: charging=%d", charging);
     update_led_state(dev, charging);
 }
 
@@ -70,7 +79,8 @@ static void charging_led_enable_impl(const struct device *dev) {
     struct charging_led_data *data = dev->data;
     
     if (data->enabled) {
-        return;  // 已经启用
+        LOG_DBG("LED already enabled");
+        return;
     }
     
     data->enabled = true;
@@ -84,7 +94,8 @@ static void charging_led_disable_impl(const struct device *dev) {
     struct charging_led_data *data = dev->data;
     
     if (!data->enabled) {
-        return;  // 已经禁用
+        LOG_DBG("LED already disabled");
+        return;
     }
     
     data->enabled = false;
@@ -93,6 +104,7 @@ static void charging_led_disable_impl(const struct device *dev) {
     const struct charging_led_config *config = dev->config;
     if (device_is_ready(config->led_gpio.port)) {
         int led_value = config->active_low ? 1 : 0;  // 关闭状态
+        LOG_INF("Disabling LED, setting to %d", led_value);
         gpio_pin_set_dt(&config->led_gpio, led_value);
     }
     
@@ -105,13 +117,20 @@ static int charging_led_init(const struct device *dev) {
     int ret;
     
     data->dev = dev;
-    data->enabled = true;  // 默认启用
-    data->last_charging_state = false;  // 默认未充电
+    data->enabled = true;
+    data->last_charging_state = false;
+    
+    LOG_INF("Initializing charging LED...");
     
     if (!device_is_ready(config->led_gpio.port)) {
         LOG_ERR("LED GPIO device is not ready");
+        LOG_ERR("Port: %s, Pin: %d", 
+                config->led_gpio.port->name, config->led_gpio.pin);
         return -ENODEV;
     }
+    
+    LOG_INF("LED GPIO device ready: %s:%d", 
+            config->led_gpio.port->name, config->led_gpio.pin);
     
     // 配置LED GPIO为输出
     ret = gpio_pin_configure_dt(&config->led_gpio, GPIO_OUTPUT_INACTIVE);
@@ -120,13 +139,22 @@ static int charging_led_init(const struct device *dev) {
         return ret;
     }
     
+    LOG_INF("LED GPIO configured as output");
+    
     // 初始状态：关闭LED
     int init_value = config->active_low ? 1 : 0;
-    gpio_pin_set_dt(&config->led_gpio, init_value);
+    LOG_INF("Setting initial LED value: %d (active_low: %d)", 
+            init_value, config->active_low);
     
-    LOG_INF("Charging LED initialized on pin %s:%d (active_low: %s)", 
-            config->led_gpio.port->name, config->led_gpio.pin,
-            config->active_low ? "yes" : "no");
+    ret = gpio_pin_set_dt(&config->led_gpio, init_value);
+    if (ret < 0) {
+        LOG_ERR("Failed to set initial LED value: %d", ret);
+    }
+    
+    LOG_INF("Charging LED initialized successfully");
+    LOG_INF("  LED pin: %s:%d", config->led_gpio.port->name, config->led_gpio.pin);
+    LOG_INF("  Active low: %s", config->active_low ? "yes" : "no");
+    LOG_INF("  Initial state: OFF");
     
     return 0;
 }
@@ -135,19 +163,17 @@ static int charging_led_init(const struct device *dev) {
 
 static int charging_led_pm_action(const struct device *dev,
                                  enum pm_device_action action) {
-    struct charging_led_data *data = dev->data;
+    LOG_INF("charging_led_pm_action: %d", action);
     
     switch (action) {
     case PM_DEVICE_ACTION_SUSPEND:
-        // 挂起时关闭LED
         charging_led_disable_impl(dev);
-        LOG_DBG("Charging LED suspended");
+        LOG_INF("Charging LED suspended");
         return 0;
         
     case PM_DEVICE_ACTION_RESUME:
-        // 恢复时启用LED
         charging_led_enable_impl(dev);
-        LOG_DBG("Charging LED resumed");
+        LOG_INF("Charging LED resumed");
         return 0;
         
     default:
@@ -157,7 +183,6 @@ static int charging_led_pm_action(const struct device *dev,
 
 #endif /* CONFIG_PM_DEVICE */
 
-// 定义驱动API结构体
 static const struct charging_led_driver_api charging_led_api = {
     .set_charging = charging_led_set_charging_impl,
     .enable = charging_led_enable_impl,

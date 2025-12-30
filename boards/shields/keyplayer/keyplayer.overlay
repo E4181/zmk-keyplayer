@@ -101,7 +101,7 @@
     
     charging_led: charging_led {
         compatible = "zmk,charging-led";
-        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06, 高电平点亮
+        led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06
         label = "CHARGING_LED";
     };
 };

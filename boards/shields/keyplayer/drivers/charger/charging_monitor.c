@@ -52,15 +52,18 @@ static void charging_monitor_work_handler(struct k_work *work) {
         return;
     }
     
+    // 详细记录引脚状态
+    LOG_DBG("CHRG pin read: %d (0=charging, 1=idle)", pin_state);
+    
     // 确定充电状态：TP4056 CHRG引脚低电平表示正在充电
     enum charging_status new_status;
     
     if (pin_state == 0) {
         new_status = CHARGING_STATUS_CHARGING;
-        LOG_DBG("CHRG pin LOW -> CHARGING");
+        LOG_INF("CHRG pin LOW (0) -> CHARGING");
     } else {
         new_status = CHARGING_STATUS_IDLE;
-        LOG_DBG("CHRG pin HIGH -> IDLE");
+        LOG_INF("CHRG pin HIGH (1) -> IDLE");
     }
     
     // 更新状态
@@ -74,21 +77,27 @@ static void charging_monitor_work_handler(struct k_work *work) {
         
         // 通知注册的回调
         if (data->callback_registered) {
+            LOG_DBG("Notifying registered callback");
             data->user_callback.function(data->dev, new_status, 
                                         data->user_callback.user_data);
         }
         
         // 发布充电状态变化事件
+        LOG_DBG("Raising charging state changed event");
         raise_charging_state_changed((struct charging_state_changed){
             .is_charging = (new_status == CHARGING_STATUS_CHARGING),
             .timestamp = k_uptime_get()
         });
+    } else {
+        LOG_DBG("Charging status unchanged: %s", 
+                new_status == CHARGING_STATUS_CHARGING ? "CHARGING" : "IDLE");
     }
 }
 
 static void charging_monitor_debounce_timer_handler(struct k_timer *timer) {
     struct charging_monitor_data *data =
         CONTAINER_OF(timer, struct charging_monitor_data, debounce_timer);
+    LOG_DBG("Debounce timer expired, submitting work");
     k_work_submit(&data->work);
 }
 
@@ -97,6 +106,8 @@ static void charging_monitor_gpio_callback(const struct device *port,
                                           gpio_port_pins_t pins) {
     struct charging_monitor_data *data =
         CONTAINER_OF(cb, struct charging_monitor_data, gpio_cb);
+    
+    LOG_DBG("GPIO interrupt triggered on CHRG pin");
     
     // 启动去抖动定时器
     const struct charging_monitor_config *config = data->dev->config;
@@ -114,16 +125,33 @@ static int charging_monitor_init(const struct device *dev) {
     data->last_status = CHARGING_STATUS_IDLE;
     data->callback_registered = false;
     
+    LOG_INF("Initializing charging monitor...");
+    
     if (!device_is_ready(config->chrg_gpio.port)) {
         LOG_ERR("CHRG GPIO device is not ready");
+        LOG_ERR("Port: %s, Pin: %d", 
+                config->chrg_gpio.port->name, config->chrg_gpio.pin);
         return -ENODEV;
     }
+    
+    LOG_INF("CHRG GPIO device ready: %s:%d", 
+            config->chrg_gpio.port->name, config->chrg_gpio.pin);
     
     // 配置CHRG引脚为输入
     ret = gpio_pin_configure_dt(&config->chrg_gpio, GPIO_INPUT);
     if (ret < 0) {
         LOG_ERR("Failed to configure CHRG GPIO: %d", ret);
         return ret;
+    }
+    
+    LOG_INF("CHRG GPIO configured as input");
+    
+    // 立即读取一次引脚状态
+    int init_state = gpio_pin_get_dt(&config->chrg_gpio);
+    if (init_state < 0) {
+        LOG_ERR("Failed to read initial CHRG pin state: %d", init_state);
+    } else {
+        LOG_INF("Initial CHRG pin state: %d (0=charging, 1=idle)", init_state);
     }
     
     // 配置中断
@@ -134,10 +162,14 @@ static int charging_monitor_init(const struct device *dev) {
         return ret;
     }
     
+    LOG_INF("CHRG GPIO interrupt configured (edge both)");
+    
     // 初始化工作队列和定时器
     k_work_init(&data->work, charging_monitor_work_handler);
     k_timer_init(&data->debounce_timer, 
                  charging_monitor_debounce_timer_handler, NULL);
+    
+    LOG_INF("Work and timer initialized");
     
     // 设置GPIO回调
     gpio_init_callback(&data->gpio_cb, charging_monitor_gpio_callback,
@@ -149,12 +181,15 @@ static int charging_monitor_init(const struct device *dev) {
         return ret;
     }
     
+    LOG_INF("GPIO callback added successfully");
+    
     // 执行初始状态读取
+    LOG_INF("Submitting initial work...");
     k_work_submit(&data->work);
     
-    LOG_INF("Charging monitor initialized on pin %s:%d", 
-            config->chrg_gpio.port->name, config->chrg_gpio.pin);
-    LOG_INF("Debounce time: %d ms", config->debounce_ms);
+    LOG_INF("Charging monitor fully initialized");
+    LOG_INF("  CHRG pin: %s:%d", config->chrg_gpio.port->name, config->chrg_gpio.pin);
+    LOG_INF("  Debounce time: %d ms", config->debounce_ms);
     
     return 0;
 }
@@ -164,21 +199,27 @@ static int charging_monitor_init(const struct device *dev) {
 static int charging_monitor_pm_action(const struct device *dev,
                                      enum pm_device_action action) {
     const struct charging_monitor_config *config = dev->config;
+    struct charging_monitor_data *data = dev->data;
     int ret;
     
     switch (action) {
     case PM_DEVICE_ACTION_SUSPEND:
+        LOG_INF("Suspending charging monitor");
         ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio, 
                                              GPIO_INT_DISABLE);
-        LOG_DBG("Charging monitor suspended");
+        if (ret < 0) {
+            LOG_WRN("Failed to disable interrupt on suspend: %d", ret);
+        }
         return ret;
         
     case PM_DEVICE_ACTION_RESUME:
+        LOG_INF("Resuming charging monitor");
         ret = gpio_pin_interrupt_configure_dt(&config->chrg_gpio,
                                              GPIO_INT_EDGE_BOTH);
-        struct charging_monitor_data *data = dev->data;
+        if (ret < 0) {
+            LOG_WRN("Failed to enable interrupt on resume: %d", ret);
+        }
         k_work_submit(&data->work);
-        LOG_DBG("Charging monitor resumed");
         return ret;
         
     default:
@@ -191,12 +232,16 @@ static int charging_monitor_pm_action(const struct device *dev,
 // 驱动API函数实现
 static enum charging_status charging_monitor_get_status_impl(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
+    LOG_DBG("get_status called, returning: %s", 
+            data->current_status == CHARGING_STATUS_CHARGING ? "CHARGING" : "IDLE");
     return data->current_status;
 }
 
 static bool charging_monitor_is_charging_impl(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
-    return (data->current_status == CHARGING_STATUS_CHARGING);
+    bool is_charging = (data->current_status == CHARGING_STATUS_CHARGING);
+    LOG_DBG("is_charging called, returning: %s", is_charging ? "true" : "false");
+    return is_charging;
 }
 
 static int charging_monitor_register_callback_impl(const struct device *dev,
@@ -207,12 +252,15 @@ static int charging_monitor_register_callback_impl(const struct device *dev,
     struct charging_monitor_data *data = dev->data;
     
     if (callback == NULL) {
+        LOG_ERR("Cannot register NULL callback");
         return -EINVAL;
     }
     
     data->user_callback.function = callback;
     data->user_callback.user_data = user_data;
     data->callback_registered = true;
+    
+    LOG_INF("Callback registered: %p", callback);
     
     return 0;
 }
