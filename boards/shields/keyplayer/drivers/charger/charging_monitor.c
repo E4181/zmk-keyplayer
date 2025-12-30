@@ -80,7 +80,7 @@ static void charging_monitor_work_handler(struct k_work *work) {
                                         data->user_callback.user_data);
         }
         
-        // Raise ZMK event for system-wide notification
+        // Raise ZMK event for system-wide notification - 修正函数名
         raise_zmk_charging_state_changed((struct charging_state_changed){
             .is_charging = (new_status == CHARGING_STATUS_CHARGING),
             .timestamp = k_uptime_get()
@@ -199,21 +199,22 @@ static int charging_monitor_pm_action(const struct device *dev,
 
 #endif /* CONFIG_PM_DEVICE */
 
-static enum charging_status charging_monitor_get_status(const struct device *dev) {
+// 移除static，这些是API函数
+enum charging_status charging_monitor_get_status(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
     return data->current_status;
 }
 
-static bool charging_monitor_is_charging(const struct device *dev) {
+bool charging_monitor_is_charging(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
     return (data->current_status == CHARGING_STATUS_CHARGING);
 }
 
-static int charging_monitor_register_callback(const struct device *dev,
-                                             void (*callback)(const struct device *dev,
-                                                             enum charging_status status,
-                                                             void *user_data),
-                                             void *user_data) {
+int charging_monitor_register_callback(const struct device *dev,
+                                       void (*callback)(const struct device *dev,
+                                                       enum charging_status status,
+                                                       void *user_data),
+                                       void *user_data) {
     struct charging_monitor_data *data = dev->data;
     
     if (callback == NULL) {
