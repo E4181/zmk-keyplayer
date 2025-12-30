@@ -35,6 +35,7 @@ menuconfig CHARGING_MONITOR
     default y
     help
       Enable monitoring of TP4056 charging status via CHRG pin.
+      Includes fault detection and multiple callback support.
 
 if CHARGING_MONITOR
 
@@ -52,5 +53,11 @@ config CHARGING_MONITOR_INIT_PRIORITY
     default 90
     help
       Charging monitor device driver initialization priority.
+
+config CHARGING_MONITOR_FAULT_DETECTION
+    bool "Enable fault detection"
+    default y
+    help
+      Enable detection of charging faults such as timeout and bad battery.
 
 endif # CHARGING_MONITOR
