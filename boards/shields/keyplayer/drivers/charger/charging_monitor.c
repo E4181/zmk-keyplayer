@@ -14,8 +14,8 @@
 #include <zephyr/pm/device.h>
 
 #include <zmk/event_manager.h>
-#include "charging_state_changed.h"
-#include "charging_monitor.h"
+#include <zmk/events/charging_state_changed.h>
+#include <drivers/charger/charging_monitor.h>
 
 LOG_MODULE_REGISTER(charging_monitor, CONFIG_CHARGING_MONITOR_LOG_LEVEL);
 
@@ -80,8 +80,8 @@ static void charging_monitor_work_handler(struct k_work *work) {
                                         data->user_callback.user_data);
         }
         
-        // Raise ZMK event for system-wide notification - 修正函数名
-        raise_zmk_charging_state_changed((struct charging_state_changed){
+        // 修正：使用正确的函数名 raise_charging_state_changed
+        raise_charging_state_changed((struct charging_state_changed){
             .is_charging = (new_status == CHARGING_STATUS_CHARGING),
             .timestamp = k_uptime_get()
         });
@@ -199,7 +199,7 @@ static int charging_monitor_pm_action(const struct device *dev,
 
 #endif /* CONFIG_PM_DEVICE */
 
-// 移除static，这些是API函数
+// 实现驱动API函数
 enum charging_status charging_monitor_get_status(const struct device *dev) {
     struct charging_monitor_data *data = dev->data;
     return data->current_status;
@@ -228,6 +228,7 @@ int charging_monitor_register_callback(const struct device *dev,
     return 0;
 }
 
+// 定义驱动API结构体
 static const struct charging_monitor_driver_api charging_monitor_api = {
     .get_status = charging_monitor_get_status,
     .is_charging = charging_monitor_is_charging,
