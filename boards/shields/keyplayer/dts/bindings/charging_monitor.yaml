@@ -28,7 +28,3 @@ properties:
 
 required:
   - chrg-gpios
-
----
-# This is the schema for the child nodes of a charging-monitor node.
-# Since we don't have child nodes, we leave it empty but must include the separator.
