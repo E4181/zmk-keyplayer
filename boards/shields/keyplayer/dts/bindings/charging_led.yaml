@@ -19,11 +19,10 @@ properties:
 
   active-low:
     type: boolean
-    required: false
-    default: false
     description: >
       If true, the LED is on when the GPIO output is low.
       This should match the GPIO flags in led-gpios.
+      If not specified, defaults to false.
 
   label:
     type: string
