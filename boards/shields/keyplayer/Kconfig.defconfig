@@ -15,20 +15,6 @@ config LED_PWM
 
 endif # ZMK_BACKLIGHT
 
-
-menuconfig ZMK_LAYER_STATE_MANAGER
-    bool "Layer State Manager"
-    default y
-    help
-      Enable layer state manager for monitoring layer changes.
-
-
-config ZMK_BEHAVIOR_LAYER_LED_INDICATOR
-    bool "Enable layer LED indicator behavior"
-    default y
-    help
-      Blinks an LED when switching to a specific layer
-
 # Charging Status Driver Configuration
 
 menuconfig CHARGING_STATUS
