@@ -41,6 +41,14 @@ void charging_status_refresh(void);
  */
 const char* charging_status_get_string(void);
 
+/**
+ * @brief 检查充电状态是否发生了变化
+ * 
+ * @return true 状态自上次查询后发生了变化
+ * @return false 状态未变化
+ */
+bool charging_status_has_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

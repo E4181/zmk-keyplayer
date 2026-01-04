@@ -9,7 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <zmk/event_manager.h>
-#include <zmk/events/activity_state_changed.h>
+#include <zmk/events/battery_state_changed.h>
 #include <zmk/activity.h>
 
 LOG_MODULE_REGISTER(charging_status, CONFIG_ZMK_LOG_LEVEL);
@@ -23,6 +23,7 @@ struct charging_status_data {
     const struct device *gpio_dev;
     struct gpio_callback gpio_cb;
     struct k_work_delayable debounce_work;
+    struct k_work_delayable periodic_work;
     bool is_charging;
     bool last_charging_state;
     int pin_state;
@@ -31,22 +32,15 @@ struct charging_status_data {
 /* 全局实例 */
 static struct charging_status_data charger_data;
 
-/* 事件定义 */
-enum charging_event {
-    CHARGING_EVENT_NONE,
-    CHARGING_EVENT_STARTED,
-    CHARGING_EVENT_STOPPED
-};
-
 /* 内部函数声明 */
 static int charging_status_init(void);
 static void chrg_gpio_callback(const struct device *dev,
                                struct gpio_callback *cb,
                                uint32_t pins);
 static void debounce_work_handler(struct k_work *work);
+static void periodic_work_handler(struct k_work *work);
 static void update_charging_state(bool new_state);
 static void log_pin_state(void);
-static void send_charging_event(enum charging_event event);
 
 /* 初始化函数 - ZMK兼容的初始化 */
 static int charging_status_init(void)
@@ -105,6 +99,10 @@ static int charging_status_init(void)
     k_work_init_delayable(&charger_data.debounce_work,
                          debounce_work_handler);
     
+    /* 初始化定期工作队列（每2秒检查一次） */
+    k_work_init_delayable(&charger_data.periodic_work,
+                         periodic_work_handler);
+    
     /* 初始读取引脚状态 */
     int init_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
     if (init_state < 0) {
@@ -123,8 +121,8 @@ static int charging_status_init(void)
         log_pin_state();
     }
     
-    /* 启动一个周期性工作来监测状态变化 */
-    k_work_schedule(&charger_data.debounce_work, K_MSEC(1000));
+    /* 启动周期性工作（2秒后开始，每5秒执行一次） */
+    k_work_schedule(&charger_data.periodic_work, K_MSEC(2000));
     
     LOG_INF("TP4056 Charging Status Monitor initialized successfully");
     LOG_INF("Monitoring CHRG pin via P1.09");
@@ -141,8 +139,8 @@ static void chrg_gpio_callback(const struct device *dev,
     ARG_UNUSED(cb);
     
     if (pins & BIT(CHRG_GPIO_PIN)) {
-        /* 防抖处理：延迟50ms后读取状态 */
-        k_work_reschedule(&charger_data.debounce_work, K_MSEC(50));
+        /* 防抖处理：延迟100ms后读取状态 */
+        k_work_reschedule(&charger_data.debounce_work, K_MSEC(100));
         
         /* 立即读取并记录引脚状态 */
         int current_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
@@ -163,8 +161,6 @@ static void debounce_work_handler(struct k_work *work)
     
     if (current_state < 0) {
         LOG_ERR("Failed to read pin state: %d", current_state);
-        /* 10秒后重试 */
-        k_work_schedule(&charger_data.debounce_work, K_SECONDS(10));
         return;
     }
     
@@ -188,17 +184,31 @@ static void debounce_work_handler(struct k_work *work)
         
         /* 更新状态 */
         update_charging_state(new_charging_state);
-        
-        /* 发送事件 */
-        if (new_charging_state) {
-            send_charging_event(CHARGING_EVENT_STARTED);
-        } else {
-            send_charging_event(CHARGING_EVENT_STOPPED);
-        }
+    }
+}
+
+/* 定期工作队列处理函数（确保不会错过状态变化） */
+static void periodic_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    
+    /* 读取当前引脚状态 */
+    int current_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
+    
+    if (current_state < 0) {
+        LOG_WRN("Failed to read pin state in periodic check: %d", current_state);
+    } else if (current_state != charger_data.pin_state) {
+        /* 状态变化了，触发防抖处理 */
+        k_work_reschedule(&charger_data.debounce_work, K_MSEC(50));
+    } else {
+        /* 状态未变，记录一次日志 */
+        LOG_DBG("Periodic check: pin state=%d, charging=%s",
+               current_state,
+               charger_data.is_charging ? "YES" : "NO");
     }
     
-    /* 定期检查（每5秒）以防错过中断 */
-    k_work_schedule(&charger_data.debounce_work, K_SECONDS(5));
+    /* 每5秒检查一次 */
+    k_work_schedule(&charger_data.periodic_work, K_SECONDS(5));
 }
 
 /* 更新充电状态 */
@@ -215,32 +225,15 @@ static void log_pin_state(void)
      * 0 = 低电平 = 正在充电
      * 1 = 高电平 = 未充电/充电完成
      */
+    int pin_state = charger_data.pin_state;
+    bool is_charging = charger_data.is_charging;
+    
     LOG_INF("CHRG pin(P1.09) state: %d - %s", 
-           charger_data.pin_state,
-           charger_data.pin_state == 0 ? "LOW (CHARGING)" : "HIGH (NOT CHARGING)");
+           pin_state,
+           pin_state == 0 ? "LOW" : "HIGH");
     
     LOG_INF("Charging status: %s",
-           charger_data.is_charging ? "CHARGING" : "NOT CHARGING");
-}
-
-/* 发送充电事件到ZMK事件系统 */
-static void send_charging_event(enum charging_event event)
-{
-    struct zmk_activity_state_changed *ev;
-    
-    ev = new_zmk_activity_state_changed();
-    if (ev) {
-        /* 正在充电时设置为活跃状态 */
-        ev->state = charger_data.is_charging ? 
-                    ZMK_ACTIVITY_ACTIVE : 
-                    ZMK_ACTIVITY_IDLE;
-        
-        /* 发布事件 */
-        ZMK_EVENT_RAISE(ev);
-        
-        LOG_INF("Charging event sent: %s",
-               event == CHARGING_EVENT_STARTED ? "CHARGING_STARTED" : "CHARGING_STOPPED");
-    }
+           is_charging ? "CHARGING" : "NOT CHARGING");
 }
 
 /* 公共API：获取当前充电状态 */
@@ -268,11 +261,17 @@ const char* charging_status_get_string(void)
     return charger_data.is_charging ? "CHARGING" : "NOT_CHARGING";
 }
 
-/* ZMK兼容的初始化 */
-SYS_INIT(charging_status_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+/* 公共API：获取状态变化历史 */
+bool charging_status_has_changed(void)
+{
+    return charger_data.is_charging != charger_data.last_charging_state;
+}
 
-/* 导出公共API */
-ZMK_SYMBOL_EXPORT(charging_status_is_charging);
-ZMK_SYMBOL_EXPORT(charging_status_get_pin_state);
-ZMK_SYMBOL_EXPORT(charging_status_refresh);
-ZMK_SYMBOL_EXPORT(charging_status_get_string);
+/* ZMK兼容的初始化 - 使用POST_KERNEL优先级 */
+static int charging_status_init_post(const struct device *dev)
+{
+    ARG_UNUSED(dev);
+    return charging_status_init();
+}
+
+SYS_INIT(charging_status_init_post, POST_KERNEL, 90);
