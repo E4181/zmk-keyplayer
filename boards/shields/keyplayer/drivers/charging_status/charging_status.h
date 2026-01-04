@@ -1,6 +1,9 @@
 #ifndef CHARGING_STATUS_H
 #define CHARGING_STATUS_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +66,42 @@ uint32_t charging_status_get_change_count(void);
  */
 void charging_status_get_history(charging_state_t *current, 
                                 charging_state_t *last);
+
+/**
+ * @brief 设置轮询模式
+ * 
+ * @param quick_mode true=快速轮询模式(1秒间隔), false=正常轮询模式
+ */
+void charging_status_set_poll_mode(bool quick_mode);
+
+/**
+ * @brief 获取当前轮询间隔
+ * 
+ * @return uint32_t 当前轮询间隔（秒）
+ */
+uint32_t charging_status_get_poll_interval(void);
+
+/**
+ * @brief 获取中断计数
+ * 
+ * @return uint32_t GPIO中断触发次数
+ */
+uint32_t charging_status_get_interrupt_count(void);
+
+/**
+ * @brief 获取上次状态变化时间
+ * 
+ * @return uint64_t 上次状态变化时间（毫秒，从系统启动开始）
+ */
+uint64_t charging_status_get_last_change_time(void);
+
+/**
+ * @brief 检查是否在快速轮询模式
+ * 
+ * @return true 在快速轮询模式
+ * @return false 不在快速轮询模式
+ */
+bool charging_status_is_quick_polling(void);
 
 /**
  * @brief 重新初始化充电状态监测器
