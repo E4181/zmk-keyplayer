@@ -9,6 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
+#include <math.h>  /* 添加数学函数头文件 */
 #include "charging_status.h"  /* 充电状态接口 */
 
 /* 定义M_PI（如果未定义） */
