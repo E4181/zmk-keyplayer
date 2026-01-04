@@ -33,4 +33,10 @@ config CHARGING_STATUS_LOG_LEVEL
       Log level for charging status driver.
       0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
 
+config CHARGING_STATUS_USE_INTERRUPT
+    bool "Use GPIO interrupt for state detection"
+    default y
+    help
+      Use GPIO interrupt to detect state changes. If disabled, polling mode will be used.
+
 endif

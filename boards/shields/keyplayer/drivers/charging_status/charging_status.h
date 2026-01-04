@@ -34,6 +34,13 @@ bool charging_status_is_charging(void);
  */
 void charging_status_log_detailed(void);
 
+/**
+ * @brief 获取原始GPIO电平值
+ * 
+ * @return int 0=低电平, 1=高电平, 负值=错误
+ */
+int charging_status_get_raw_level(void);
+
 #ifdef __cplusplus
 }
 #endif
