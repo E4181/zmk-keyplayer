@@ -1,5 +1,5 @@
 /*
- * TP4056 CHRG引脚状态监测驱动 - 修正版
+ * TP4056 CHRG引脚状态监测驱动 - 优化版
  * 硬编码使用nRF52840 P1.09引脚
  * 专注于引脚电平读取和日志输出，增加强防抖机制
  */
@@ -21,8 +21,9 @@ LOG_MODULE_REGISTER(charging_status, CHARGING_STATUS_LOG_LEVEL);
 
 /* 防抖配置 */
 #define DEBOUNCE_DELAY_MS 500    /* 防抖延迟500ms */
-#define POLL_INTERVAL_SEC 2      /* 轮询间隔2秒 */
+#define POLL_INTERVAL_SEC 5      /* 轮询间隔5秒 */
 #define MIN_STABLE_COUNT 3       /* 最小稳定次数 */
+#define SUPPRESS_POLL_LOGS 1     /* 1=抑制轮询日志，0=显示轮询日志 */
 
 /* 状态结构体 */
 struct charging_status_data {
@@ -62,7 +63,6 @@ static void poll_work_handler(struct k_work *work);
 static void update_charging_state(int pin_state, bool force_report);
 static void report_state_change(charging_state_t old_state, charging_state_t new_state);
 static int read_chrg_pin(void);
-static void init_charging_status(void);
 
 /* GPIO中断回调函数 */
 static void chrg_gpio_callback(const struct device *dev,
@@ -75,9 +75,6 @@ static void chrg_gpio_callback(const struct device *dev,
     if (pins & BIT(CHRG_GPIO_PIN)) {
         /* 增加中断计数 */
         charger_data.interrupt_count++;
-        
-        /* 仅在调试时记录中断日志 */
-        LOG_DBG("GPIO中断 #%u", charger_data.interrupt_count);
         
         /* 如果已经在防抖中，取消之前的防抖工作，重新开始 */
         if (charger_data.is_debouncing) {
@@ -122,14 +119,16 @@ static void poll_work_handler(struct k_work *work)
     int pin_state = read_chrg_pin();
     
     if (pin_state >= 0) {
-        /* 更新状态（强制报告，因为轮询间隔较长） */
-        update_charging_state(pin_state, true);
+        /* 更新状态（不强制报告） */
+        update_charging_state(pin_state, false);
         
-        /* 记录轮询日志（仅调试） */
+        /* 可选：记录轮询日志（仅调试，且可配置） */
+        #if SUPPRESS_POLL_LOGS == 0
         LOG_DBG("轮询: 引脚=%d, 状态=%s, 中断次数=%u", 
                pin_state, 
                state_strings[charger_data.current_state],
                charger_data.interrupt_count);
+        #endif
     }
     
     /* 重新调度轮询工作 */
@@ -187,16 +186,11 @@ static void update_charging_state(int pin_state, bool force_report)
             
             /* 报告状态变化 */
             report_state_change(old_state, new_state);
-        } else if (force_report) {
-            /* 强制报告当前状态（例如轮询时） */
-            LOG_INF("当前状态: %s (引脚=%d)", 
-                   state_strings[charger_data.current_state],
-                   pin_state);
         }
+        /* 移除force_report的输出，只有在手动更新时才需要 */
     } else {
-        /* 状态不稳定，不更新状态，仅记录调试信息 */
-        LOG_DBG("状态不稳定，稳定计数: %d/%d", 
-               charger_data.stable_count, MIN_STABLE_COUNT);
+        /* 状态不稳定，不更新状态 */
+        /* 可以添加DEBUG日志，但这里不输出减少日志 */
     }
 }
 
@@ -350,8 +344,13 @@ void charging_status_update_now(void)
     
     int pin_state = read_chrg_pin();
     if (pin_state >= 0) {
-        /* 手动更新时强制报告 */
-        update_charging_state(pin_state, true);
+        /* 手动更新时也报告当前状态 */
+        LOG_INF("当前状态: %s (引脚=%d)", 
+               state_strings[charger_data.current_state],
+               pin_state);
+        
+        /* 更新状态 */
+        update_charging_state(pin_state, false);
     }
 }
 
