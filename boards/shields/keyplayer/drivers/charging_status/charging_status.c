@@ -9,6 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include "charging_status.h"
+#include "charging_breathe.h"
 
 /* 硬编码日志级别 - 设置为INFO级别，重要事件可见 */
 #define CHARGING_STATUS_LOG_LEVEL 3  /* INFO级别 */
@@ -305,6 +306,18 @@ static void report_state_change(charging_state_t old_state, charging_state_t new
     LOG_INF("中断触发次数: %u", charger_data.interrupt_count);
     LOG_INF("响应延迟: %dms", DEBOUNCE_DELAY_MS);
     LOG_INF("========================================");
+    
+    /* 更新上次报告的状态 */
+    charger_data.last_reported_state = new_state;
+    
+    /* 通知呼吸灯状态变化 */
+    if (new_state == CHARGING_STATE_CHARGING) {
+        /* 开始充电：启用呼吸效果 */
+        charging_breathe_set_state(true);
+    } else {
+        /* 停止充电：关闭呼吸效果 */
+        charging_breathe_set_state(false);
+    }
 }
 
 /* 初始化函数 */

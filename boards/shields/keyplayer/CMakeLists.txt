@@ -7,4 +7,5 @@ target_sources(app PRIVATE
     #drivers/charger/charging_led.c
     #drivers/charger/charging_controller.c
     drivers/charging_status/charging_status.c
+    drivers/charging_status/charging_breathe.c
 )
