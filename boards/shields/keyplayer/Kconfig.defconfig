@@ -14,29 +14,3 @@ config LED_PWM
     default y
 
 endif # ZMK_BACKLIGHT
-
-# Charging Status Driver Configuration
-
-config CHARGING_STATUS
-    bool "Enable TP4056 Charging Status Driver"
-    default y
-    help
-      Enable driver for TP4056 charging status detection on P1.09.
-
-if CHARGING_STATUS
-
-config CHARGING_STATUS_LOG_LEVEL
-    int "Log level"
-    default 3
-    range 0 4
-    help
-      Log level for charging status driver.
-      0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
-
-config CHARGING_STATUS_USE_INTERRUPT
-    bool "Use GPIO interrupt for state detection"
-    default y
-    help
-      Use GPIO interrupt to detect state changes. If disabled, polling mode will be used.
-
-endif

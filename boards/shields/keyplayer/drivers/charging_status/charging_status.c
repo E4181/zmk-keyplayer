@@ -1,363 +1,278 @@
 /*
- * Copyright (c) 2024
- * SPDX-License-Identifier: MIT
+ * ZMK兼容的TP4056充电状态检测驱动
+ * 硬编码使用nRF52840 P1.09引脚
+ * 兼容ZMK v3.0+
  */
 
-#include "charging_status.h"
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/logging/log.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/activity_state_changed.h>
+#include <zmk/activity.h>
 
-LOG_MODULE_REGISTER(charging_status, CONFIG_CHARGING_STATUS_LOG_LEVEL);
+LOG_MODULE_REGISTER(charging_status, CONFIG_ZMK_LOG_LEVEL);
 
-/* 硬编码 GPIO 配置 - P1.09 (nRF52840) */
-#define CHARGING_STATUS_PORT DEVICE_DT_GET(DT_NODELABEL(gpio1))
-#define CHARGING_STATUS_PIN 9
+/* 硬编码配置 - P1.09引脚 */
+#define CHRG_GPIO_PORT DT_NODELABEL(gpio1)  /* GPIO1外设 */
+#define CHRG_GPIO_PIN  9                    /* P1.09引脚 */
 
-/* 防抖和滤波参数 */
-#define DEBOUNCE_DELAY_MS    100  /* 防抖延时100ms */
-#define SAMPLE_COUNT         5    /* 采样次数 */
-#define STABLE_THRESHOLD     4    /* 稳定阈值（5次中4次相同） */
-#define POLL_INTERVAL_MS     100  /* 轮询间隔（如果不使用中断） */
-
-/* 驱动数据结构 */
-static struct {
+/* 充电状态结构体 */
+struct charging_status_data {
     const struct device *gpio_dev;
     struct gpio_callback gpio_cb;
-    struct k_mutex mutex;
-    struct k_timer debounce_timer;
-    struct k_timer poll_timer;      /* 轮询定时器 */
-    bool current_state;             /* 当前稳定状态 */
-    bool initialized;
-    uint8_t sample_buffer[SAMPLE_COUNT];  /* 采样缓冲区 */
-    uint8_t sample_index;
-    int interrupt_count;            /* 中断计数（调试用） */
-} charging_status_data;
+    struct k_work_delayable debounce_work;
+    bool is_charging;
+    bool last_charging_state;
+    int pin_state;
+};
 
-/* 工作队列处理函数 */
-static void process_state_change(struct k_work *work)
-{
-    int ret;
-    bool new_state;
-    int high_count = 0;
-    int low_count = 0;
-    
-    ARG_UNUSED(work);
-    
-    if (!charging_status_data.initialized) {
-        return;
-    }
-    
-    LOG_DBG("Processing state change...");
-    
-    /* 多次采样，避免噪声 */
-    for (int i = 0; i < SAMPLE_COUNT; i++) {
-        ret = gpio_pin_get(charging_status_data.gpio_dev, CHARGING_STATUS_PIN);
-        if (ret < 0) {
-            LOG_ERR("Failed to get GPIO state: %d", ret);
-            continue;
-        }
-        
-        if (ret == 0) {
-            low_count++;
-        } else {
-            high_count++;
-        }
-        
-        /* 小延迟避免连续读取 */
-        k_busy_wait(100);
-    }
-    
-    /* 判断状态 */
-    if (high_count >= STABLE_THRESHOLD) {
-        new_state = false;  /* 高电平 - 未充电 */
-    } else if (low_count >= STABLE_THRESHOLD) {
-        new_state = true;   /* 低电平 - 充电中 */
-    } else {
-        /* 状态不稳定，保持原状态 */
-        LOG_WRN("State unstable: high=%d, low=%d", high_count, low_count);
-        return;
-    }
-    
-    /* 更新状态 */
-    k_mutex_lock(&charging_status_data.mutex, K_FOREVER);
-    
-    if (new_state != charging_status_data.current_state) {
-        charging_status_data.current_state = new_state;
-        
-        if (new_state) {
-            LOG_INF("🔌 CHARGING STARTED (CHRG pin = LOW)");
-        } else {
-            LOG_INF("🔋 CHARGING STOPPED (CHRG pin = HIGH)");
-        }
-    }
-    
-    k_mutex_unlock(&charging_status_data.mutex);
-}
+/* 全局实例 */
+static struct charging_status_data charger_data;
 
-/* 工作队列结构 */
-static K_WORK_DEFINE(state_change_work, process_state_change);
+/* 事件定义 */
+enum charging_event {
+    CHARGING_EVENT_NONE,
+    CHARGING_EVENT_STARTED,
+    CHARGING_EVENT_STOPPED
+};
 
-/* 防抖定时器回调 */
-static void debounce_timer_callback(struct k_timer *timer)
-{
-    ARG_UNUSED(timer);
-    
-    /* 提交工作到系统工作队列 */
-    k_work_submit(&state_change_work);
-}
+/* 内部函数声明 */
+static int charging_status_init(void);
+static void chrg_gpio_callback(const struct device *dev,
+                               struct gpio_callback *cb,
+                               uint32_t pins);
+static void debounce_work_handler(struct k_work *work);
+static void update_charging_state(bool new_state);
+static void log_pin_state(void);
+static void send_charging_event(enum charging_event event);
 
-/* 轮询定时器回调（不使用中断时） */
-static void poll_timer_callback(struct k_timer *timer)
-{
-    ARG_UNUSED(timer);
-    
-    /* 定期检查状态 */
-    k_work_submit(&state_change_work);
-    
-    /* 重新启动定时器 */
-    k_timer_start(&charging_status_data.poll_timer, 
-                  K_MSEC(POLL_INTERVAL_MS), 
-                  K_MSEC(POLL_INTERVAL_MS));
-}
-
-/* GPIO 中断回调函数 */
-static void charging_status_gpio_callback(const struct device *dev,
-                                         struct gpio_callback *cb,
-                                         uint32_t pins)
-{
-    ARG_UNUSED(dev);
-    ARG_UNUSED(cb);
-    ARG_UNUSED(pins);
-    
-    if (!charging_status_data.initialized) {
-        return;
-    }
-    
-    charging_status_data.interrupt_count++;
-    
-    LOG_DBG("GPIO interrupt triggered (count: %d)", 
-            charging_status_data.interrupt_count);
-    
-    /* 取消之前的定时器 */
-    k_timer_stop(&charging_status_data.debounce_timer);
-    
-    /* 重新启动防抖定时器 */
-    k_timer_start(&charging_status_data.debounce_timer, 
-                  K_MSEC(DEBOUNCE_DELAY_MS), 
-                  K_NO_WAIT);
-}
-
-/* 配置GPIO引脚 - 尝试不同配置 */
-static int configure_gpio_pin(void)
+/* 初始化函数 - ZMK兼容的初始化 */
+static int charging_status_init(void)
 {
     int ret;
     
-    LOG_INF("Configuring GPIO P1.%02d...", CHARGING_STATUS_PIN);
+    LOG_INF("Initializing TP4056 Charging Status Monitor");
+    LOG_INF("Hardcoded to P1.09 (GPIO1_09)");
     
-    /* 方法1：标准配置（INPUT + PULL_UP） */
-    ret = gpio_pin_configure(charging_status_data.gpio_dev, 
-                            CHARGING_STATUS_PIN,
-                            GPIO_INPUT | GPIO_PULL_UP);
-    
-    if (ret == 0) {
-        LOG_INF("GPIO configured as INPUT with PULL_UP");
-        return 0;
-    }
-    
-    LOG_WRN("Method 1 failed: %d", ret);
-    
-    /* 方法2：只配置为INPUT（依赖外部上拉） */
-    ret = gpio_pin_configure(charging_status_data.gpio_dev,
-                            CHARGING_STATUS_PIN,
-                            GPIO_INPUT);
-    
-    if (ret == 0) {
-        LOG_INF("GPIO configured as INPUT only (external pull-up)");
-        return 0;
-    }
-    
-    LOG_ERR("All GPIO configuration methods failed");
-    return ret;
-}
-
-int charging_status_init(void)
-{
-    int ret;
-    
-    LOG_INF("========================================");
-    LOG_INF("Initializing charging status driver");
-    LOG_INF("========================================");
-    
-    /* 检查是否已经初始化 */
-    if (charging_status_data.initialized) {
-        LOG_INF("Driver already initialized");
-        return 0;
-    }
-    
-    /* 初始化数据结构 */
-    k_mutex_init(&charging_status_data.mutex);
-    charging_status_data.current_state = false;
-    charging_status_data.initialized = false;
-    charging_status_data.sample_index = 0;
-    charging_status_data.interrupt_count = 0;
-    
-    /* 初始化采样缓冲区 */
-    for (int i = 0; i < SAMPLE_COUNT; i++) {
-        charging_status_data.sample_buffer[i] = 1; /* 默认高电平 */
-    }
-    
-    /* 初始化防抖定时器 */
-    k_timer_init(&charging_status_data.debounce_timer, 
-                 debounce_timer_callback, 
-                 NULL);
-    
-    /* 初始化轮询定时器 */
-    k_timer_init(&charging_status_data.poll_timer,
-                 poll_timer_callback,
-                 NULL);
-    
-    /* 获取 GPIO 设备 */
-    charging_status_data.gpio_dev = CHARGING_STATUS_PORT;
-    if (!device_is_ready(charging_status_data.gpio_dev)) {
-        LOG_ERR("GPIO device (GPIO1) not ready!");
+    /* 获取GPIO设备 - 硬编码使用GPIO1 */
+    charger_data.gpio_dev = DEVICE_DT_GET(CHRG_GPIO_PORT);
+    if (!device_is_ready(charger_data.gpio_dev)) {
+        LOG_ERR("GPIO1 device not ready");
         return -ENODEV;
     }
     
-    LOG_INF("GPIO1 device is ready");
+    LOG_INF("GPIO1 device ready");
     
-    /* 配置GPIO引脚 */
-    ret = configure_gpio_pin();
+    /* 配置P1.09为输入模式，启用内部上拉电阻 */
+    ret = gpio_pin_configure(charger_data.gpio_dev,
+                            CHRG_GPIO_PIN,
+                            GPIO_INPUT | GPIO_PULL_UP);
     if (ret < 0) {
-        LOG_ERR("Failed to configure GPIO pin");
+        LOG_ERR("Failed to configure P1.09: %d", ret);
         return ret;
     }
     
-    /* 获取初始状态 */
-    ret = gpio_pin_get(charging_status_data.gpio_dev, CHARGING_STATUS_PIN);
+    LOG_INF("P1.09 configured as input with pull-up");
+    
+    /* 初始化GPIO回调 */
+    gpio_init_callback(&charger_data.gpio_cb,
+                      chrg_gpio_callback,
+                      BIT(CHRG_GPIO_PIN));
+    
+    /* 配置GPIO中断 - 双边沿触发 */
+    ret = gpio_pin_interrupt_configure(charger_data.gpio_dev,
+                                      CHRG_GPIO_PIN,
+                                      GPIO_INT_EDGE_BOTH);
     if (ret < 0) {
-        LOG_ERR("Failed to get initial GPIO state: %d", ret);
+        LOG_ERR("Failed to configure interrupt: %d", ret);
         return ret;
     }
     
-    /* 初始状态判断 */
-    bool initial_state = (ret == 0); /* 低电平 = 充电中 */
+    LOG_INF("GPIO interrupt configured (both edges)");
     
-    k_mutex_lock(&charging_status_data.mutex, K_FOREVER);
-    charging_status_data.current_state = initial_state;
-    k_mutex_unlock(&charging_status_data.mutex);
-    
-    LOG_INF("Initial GPIO state: %d (%s)", 
-            ret, ret == 0 ? "LOW" : "HIGH");
-    LOG_INF("Initial charging state: %s", 
-            initial_state ? "CHARGING" : "NOT CHARGING");
-    
-    /* 配置中断 */
-    LOG_INF("Configuring GPIO interrupt...");
-    
-    /* 初始化 GPIO 回调 */
-    gpio_init_callback(&charging_status_data.gpio_cb,
-                      charging_status_gpio_callback,
-                      BIT(CHARGING_STATUS_PIN));
-    
-    /* 添加回调 */
-    ret = gpio_add_callback(charging_status_data.gpio_dev, &charging_status_data.gpio_cb);
+    /* 添加GPIO回调 */
+    ret = gpio_add_callback(charger_data.gpio_dev, &charger_data.gpio_cb);
     if (ret < 0) {
-        LOG_WRN("Failed to add GPIO callback: %d (will use polling mode)", ret);
+        LOG_ERR("Failed to add callback: %d", ret);
+        return ret;
+    }
+    
+    LOG_INF("GPIO callback registered");
+    
+    /* 初始化防抖工作队列 */
+    k_work_init_delayable(&charger_data.debounce_work,
+                         debounce_work_handler);
+    
+    /* 初始读取引脚状态 */
+    int init_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
+    if (init_state < 0) {
+        LOG_ERR("Failed to read initial pin state: %d", init_state);
     } else {
-        /* 启用 GPIO 中断 */
-        ret = gpio_pin_interrupt_configure(charging_status_data.gpio_dev,
-                                          CHARGING_STATUS_PIN,
-                                          GPIO_INT_EDGE_BOTH);
-        if (ret < 0) {
-            LOG_WRN("Failed to configure interrupt: %d (will use polling mode)", ret);
-        } else {
-            LOG_INF("GPIO interrupt enabled (EDGE_BOTH)");
-        }
+        charger_data.pin_state = init_state;
+        /* TP4056: 低电平(0)=充电，高电平(1)=未充电 */
+        charger_data.is_charging = (init_state == 0);
+        charger_data.last_charging_state = charger_data.is_charging;
+        
+        LOG_INF("Initial pin state: %d", init_state);
+        LOG_INF("Initial charging status: %s",
+               charger_data.is_charging ? "CHARGING" : "NOT CHARGING");
+        
+        /* 初始日志显示 */
+        log_pin_state();
     }
     
-    /* 启动轮询定时器（无论中断是否成功） */
-    k_timer_start(&charging_status_data.poll_timer, 
-                  K_MSEC(POLL_INTERVAL_MS), 
-                  K_MSEC(POLL_INTERVAL_MS));
+    /* 启动一个周期性工作来监测状态变化 */
+    k_work_schedule(&charger_data.debounce_work, K_MSEC(1000));
     
-    LOG_INF("Polling timer started (%d ms interval)", POLL_INTERVAL_MS);
-    
-    charging_status_data.initialized = true;
-    
-    LOG_INF("========================================");
-    LOG_INF("Charging status driver initialized");
-    LOG_INF("========================================");
+    LOG_INF("TP4056 Charging Status Monitor initialized successfully");
+    LOG_INF("Monitoring CHRG pin via P1.09");
     
     return 0;
 }
 
-bool charging_status_is_charging(void)
+/* GPIO中断回调函数 */
+static void chrg_gpio_callback(const struct device *dev,
+                               struct gpio_callback *cb,
+                               uint32_t pins)
 {
-    bool state;
+    ARG_UNUSED(dev);
+    ARG_UNUSED(cb);
     
-    if (!charging_status_data.initialized) {
-        LOG_WRN("Driver not initialized");
-        return false;
+    if (pins & BIT(CHRG_GPIO_PIN)) {
+        /* 防抖处理：延迟50ms后读取状态 */
+        k_work_reschedule(&charger_data.debounce_work, K_MSEC(50));
+        
+        /* 立即读取并记录引脚状态 */
+        int current_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
+        if (current_state >= 0) {
+            charger_data.pin_state = current_state;
+            LOG_DBG("Interrupt triggered, pin state: %d", current_state);
+        }
     }
-    
-    k_mutex_lock(&charging_status_data.mutex, K_FOREVER);
-    state = charging_status_data.current_state;
-    k_mutex_unlock(&charging_status_data.mutex);
-    
-    return state;
 }
 
-int charging_status_get_raw_level(void)
+/* 防抖工作队列处理函数 */
+static void debounce_work_handler(struct k_work *work)
 {
-    if (!charging_status_data.initialized) {
-        LOG_WRN("Driver not initialized");
-        return -1;
-    }
+    ARG_UNUSED(work);
     
-    return gpio_pin_get(charging_status_data.gpio_dev, CHARGING_STATUS_PIN);
-}
-
-void charging_status_log_detailed(void)
-{
-    if (!charging_status_data.initialized) {
-        LOG_WRN("Driver not initialized");
+    /* 读取当前引脚状态 */
+    int current_state = gpio_pin_get(charger_data.gpio_dev, CHRG_GPIO_PIN);
+    
+    if (current_state < 0) {
+        LOG_ERR("Failed to read pin state: %d", current_state);
+        /* 10秒后重试 */
+        k_work_schedule(&charger_data.debounce_work, K_SECONDS(10));
         return;
     }
     
-    int raw_level = charging_status_get_raw_level();
-    bool is_charging = charging_status_is_charging();
+    /* 更新引脚状态 */
+    charger_data.pin_state = current_state;
     
-    LOG_INF("=== Charging Status Details ===");
-    LOG_INF("Driver initialized: %s", charging_status_data.initialized ? "YES" : "NO");
-    LOG_INF("GPIO Port: GPIO1");
-    LOG_INF("GPIO Pin: %d", CHARGING_STATUS_PIN);
+    /* 根据TP4056特性判断充电状态：
+     * CHRG引脚低电平(0) = 正在充电
+     * CHRG引脚高电平(1) = 未充电/充电完成
+     */
+    bool new_charging_state = (current_state == 0);
     
-    if (raw_level >= 0) {
-        LOG_INF("Raw GPIO level: %d (%s)", 
-                raw_level, raw_level == 0 ? "LOW" : "HIGH");
-    } else {
-        LOG_INF("Raw GPIO level: ERROR (%d)", raw_level);
+    /* 记录引脚状态到日志 */
+    log_pin_state();
+    
+    /* 检查状态是否变化 */
+    if (new_charging_state != charger_data.is_charging) {
+        LOG_INF("Charging state changed: %s -> %s",
+               charger_data.is_charging ? "CHARGING" : "NOT CHARGING",
+               new_charging_state ? "CHARGING" : "NOT CHARGING");
+        
+        /* 更新状态 */
+        update_charging_state(new_charging_state);
+        
+        /* 发送事件 */
+        if (new_charging_state) {
+            send_charging_event(CHARGING_EVENT_STARTED);
+        } else {
+            send_charging_event(CHARGING_EVENT_STOPPED);
+        }
     }
     
-    LOG_INF("Interpreted state: %s", 
-            is_charging ? "CHARGING (LOW)" : "NOT CHARGING (HIGH)");
-    LOG_INF("Interrupt count: %d", charging_status_data.interrupt_count);
-    LOG_INF("===============================");
+    /* 定期检查（每5秒）以防错过中断 */
+    k_work_schedule(&charger_data.debounce_work, K_SECONDS(5));
 }
 
-/* 系统初始化函数 - 确保驱动在系统启动时初始化 */
-static int charging_status_sys_init(void)
+/* 更新充电状态 */
+static void update_charging_state(bool new_state)
 {
-    LOG_INF("System init: Starting charging status driver");
-    
-    int ret = charging_status_init();
-    if (ret < 0) {
-        LOG_ERR("System init: Failed to initialize charging status driver: %d", ret);
-        return ret;
-    }
-    
-    LOG_INF("System init: Charging status driver initialized successfully");
-    
-    return 0;
+    charger_data.last_charging_state = charger_data.is_charging;
+    charger_data.is_charging = new_state;
 }
 
-/* 使用 SYS_INIT 确保驱动在系统启动时自动初始化 */
-SYS_INIT(charging_status_sys_init, POST_KERNEL, 90);
+/* 记录引脚状态到日志 */
+static void log_pin_state(void)
+{
+    /* TP4056 CHRG引脚电平说明：
+     * 0 = 低电平 = 正在充电
+     * 1 = 高电平 = 未充电/充电完成
+     */
+    LOG_INF("CHRG pin(P1.09) state: %d - %s", 
+           charger_data.pin_state,
+           charger_data.pin_state == 0 ? "LOW (CHARGING)" : "HIGH (NOT CHARGING)");
+    
+    LOG_INF("Charging status: %s",
+           charger_data.is_charging ? "CHARGING" : "NOT CHARGING");
+}
+
+/* 发送充电事件到ZMK事件系统 */
+static void send_charging_event(enum charging_event event)
+{
+    struct zmk_activity_state_changed *ev;
+    
+    ev = new_zmk_activity_state_changed();
+    if (ev) {
+        /* 正在充电时设置为活跃状态 */
+        ev->state = charger_data.is_charging ? 
+                    ZMK_ACTIVITY_ACTIVE : 
+                    ZMK_ACTIVITY_IDLE;
+        
+        /* 发布事件 */
+        ZMK_EVENT_RAISE(ev);
+        
+        LOG_INF("Charging event sent: %s",
+               event == CHARGING_EVENT_STARTED ? "CHARGING_STARTED" : "CHARGING_STOPPED");
+    }
+}
+
+/* 公共API：获取当前充电状态 */
+bool charging_status_is_charging(void)
+{
+    return charger_data.is_charging;
+}
+
+/* 公共API：获取引脚原始状态 */
+int charging_status_get_pin_state(void)
+{
+    return charger_data.pin_state;
+}
+
+/* 公共API：手动刷新状态 */
+void charging_status_refresh(void)
+{
+    LOG_INF("Manual refresh requested");
+    k_work_reschedule(&charger_data.debounce_work, K_MSEC(10));
+}
+
+/* 公共API：获取状态字符串 */
+const char* charging_status_get_string(void)
+{
+    return charger_data.is_charging ? "CHARGING" : "NOT_CHARGING";
+}
+
+/* ZMK兼容的初始化 */
+SYS_INIT(charging_status_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+
+/* 导出公共API */
+ZMK_SYMBOL_EXPORT(charging_status_is_charging);
+ZMK_SYMBOL_EXPORT(charging_status_get_pin_state);
+ZMK_SYMBOL_EXPORT(charging_status_refresh);
+ZMK_SYMBOL_EXPORT(charging_status_get_string);
