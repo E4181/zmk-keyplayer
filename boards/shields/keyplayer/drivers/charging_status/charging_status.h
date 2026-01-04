@@ -1,13 +1,5 @@
-/*
- * TP4056充电状态检测驱动头文件
- * 纯自定义实现，专注于CHRG引脚电平读取
- */
-
 #ifndef CHARGING_STATUS_H
 #define CHARGING_STATUS_H
-
-#include <stdbool.h>
-#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
