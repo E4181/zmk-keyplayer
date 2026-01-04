@@ -10,10 +10,16 @@ if CHARGING_STATUS
 
 config CHARGING_STATUS_LOG_LEVEL
     int "Log level"
-    default 2
+    default 3  # 默认设为 INFO 级别，确保日志输出
     range 0 4
     help
       Log level for charging status driver.
       0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
+
+config CHARGING_STATUS_PERIODIC_LOG
+    bool "Enable periodic logging of charging status"
+    default y
+    help
+      Enable periodic logging of charging status every 5 seconds.
 
 endif # CHARGING_STATUS

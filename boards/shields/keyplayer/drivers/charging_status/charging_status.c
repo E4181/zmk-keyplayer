@@ -6,7 +6,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include "charging_status.h"
+#include <drivers/charging_status.h>
 
 LOG_MODULE_REGISTER(charging_status, CONFIG_CHARGING_STATUS_LOG_LEVEL);
 
@@ -30,7 +30,15 @@ static struct {
     sys_slist_t callbacks;
     bool last_state;
     bool initialized;
+    struct k_timer log_timer;  /* 用于定期记录状态的定时器 */
 } charging_status_data;
+
+/* 定期记录状态的定时器回调 */
+static void charging_status_log_timer_callback(struct k_timer *timer)
+{
+    bool current_state = charging_status_is_charging();
+    LOG_INF("CHRG pin status: %s", current_state ? "CHARGING (low)" : "NOT CHARGING (high)");
+}
 
 /* GPIO 中断回调函数 */
 static void charging_status_gpio_callback(const struct device *dev,
@@ -52,9 +60,14 @@ static void charging_status_gpio_callback(const struct device *dev,
     
     current_state = (ret == 0); /* 注意：ACTIVE_LOW，所以0表示正在充电 */
     
-    /* 如果状态改变，通知所有回调 */
+    /* 如果状态改变，记录日志并通知所有回调 */
     if (current_state != charging_status_data.last_state) {
         charging_status_data.last_state = current_state;
+        
+        /* 记录状态变化到日志 */
+        LOG_INF("CHRG pin state changed: %s -> %s",
+                charging_status_data.last_state ? "NOT CHARGING" : "CHARGING",
+                current_state ? "CHARGING" : "NOT CHARGING");
         
         /* 调用所有注册的回调 */
         struct charging_status_callback *cb_node;
@@ -63,9 +76,6 @@ static void charging_status_gpio_callback(const struct device *dev,
                 cb_node->func(current_state, cb_node->user_data);
             }
         }
-        
-        LOG_DBG("Charging state changed: %s", 
-                current_state ? "Charging" : "Not charging");
     }
 }
 
@@ -75,6 +85,7 @@ int charging_status_init(void)
     
     /* 检查是否已经初始化 */
     if (charging_status_data.initialized) {
+        LOG_INF("Charging status driver already initialized");
         return 0;
     }
     
@@ -83,6 +94,11 @@ int charging_status_init(void)
     sys_slist_init(&charging_status_data.callbacks);
     charging_status_data.last_state = false;
     charging_status_data.initialized = false;
+    
+    /* 初始化日志定时器 */
+    k_timer_init(&charging_status_data.log_timer, 
+                 charging_status_log_timer_callback, 
+                 NULL);
     
     /* 获取 GPIO 设备 */
     charging_status_data.gpio_dev = CHARGING_STATUS_PORT;
@@ -130,9 +146,13 @@ int charging_status_init(void)
     charging_status_data.last_state = (ret == 0); /* ACTIVE_LOW */
     charging_status_data.initialized = true;
     
-    LOG_INF("Charging status driver initialized on P1.%02d, initial state: %s",
-            CHARGING_STATUS_PIN,
-            charging_status_data.last_state ? "Charging" : "Not charging");
+    /* 启动日志定时器 - 每5秒记录一次状态 */
+    k_timer_start(&charging_status_data.log_timer, K_SECONDS(5), K_SECONDS(5));
+    
+    LOG_INF("Charging status driver initialized on P1.%02d", CHARGING_STATUS_PIN);
+    LOG_INF("Initial CHRG pin state: %s (GPIO level: %d)", 
+            charging_status_data.last_state ? "CHARGING" : "NOT CHARGING",
+            ret);
     
     return 0;
 }
@@ -140,6 +160,7 @@ int charging_status_init(void)
 bool charging_status_is_charging(void)
 {
     int ret;
+    bool is_charging;
     
     if (!charging_status_data.initialized) {
         LOG_WRN("Driver not initialized");
@@ -153,7 +174,13 @@ bool charging_status_is_charging(void)
         return false;
     }
     
-    return (ret == 0); /* ACTIVE_LOW，所以0表示正在充电 */
+    is_charging = (ret == 0); /* ACTIVE_LOW，所以0表示正在充电 */
+    
+    /* 调试级别的日志，显示原始电平 */
+    LOG_DBG("CHRG pin: raw level=%d, interpreted as: %s", 
+            ret, is_charging ? "CHARGING" : "NOT CHARGING");
+    
+    return is_charging;
 }
 
 int charging_status_register_callback(void (*callback)(bool is_charging, void *user_data),
@@ -180,7 +207,37 @@ int charging_status_register_callback(void (*callback)(bool is_charging, void *u
     sys_slist_append(&charging_status_data.callbacks, &cb->node);
     k_mutex_unlock(&charging_status_data.mutex);
     
-    LOG_DBG("Callback registered");
+    LOG_INF("Charging status callback registered");
     
     return 0;
+}
+
+/* 新增：获取原始 GPIO 电平值（调试用） */
+int charging_status_get_raw_level(void)
+{
+    if (!charging_status_data.initialized) {
+        return -1;
+    }
+    
+    return gpio_pin_get(charging_status_data.gpio_dev, CHARGING_STATUS_PIN);
+}
+
+/* 新增：打印详细的充电状态信息 */
+void charging_status_log_detailed(void)
+{
+    if (!charging_status_data.initialized) {
+        LOG_WRN("Driver not initialized");
+        return;
+    }
+    
+    int raw_level = charging_status_get_raw_level();
+    bool is_charging = charging_status_is_charging();
+    
+    LOG_INF("Charging status details:");
+    LOG_INF("  - GPIO Port: GPIO1");
+    LOG_INF("  - GPIO Pin: %d", CHARGING_STATUS_PIN);
+    LOG_INF("  - Raw level: %d", raw_level);
+    LOG_INF("  - Interpreted: %s", is_charging ? "CHARGING" : "NOT CHARGING");
+    LOG_INF("  - GPIO config: INPUT | PULL_UP | ACTIVE_LOW");
+    LOG_INF("  - Last state: %s", charging_status_data.last_state ? "CHARGING" : "NOT CHARGING");
 }
