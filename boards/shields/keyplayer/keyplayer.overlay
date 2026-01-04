@@ -92,16 +92,8 @@
         status = "okay";
     };
 
-    //charging_monitor: charging_monitor {
-    //    compatible = "zmk,charging-monitor";
-    //    chrg-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
-    //    debounce-ms = <50>;
-    //    label = "CHARGING_MONITOR";
-    //};
-    
-    //charging_led: charging_led {
-    //    compatible = "zmk,charging-led";
-    //    led-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  // P1.06
-    //    label = "CHARGING_LED";
-    //};
+    charging_status: charging_status {
+        compatible = "charging-status";
+        status-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
+    };
 };

@@ -1,0 +1,28 @@
+# Charging Status Driver Configuration
+
+menuconfig CHARGING_STATUS
+    bool "TP4056 Charging Status Driver"
+    default y
+    help
+      Enable driver for TP4056 charging status detection.
+
+if CHARGING_STATUS
+
+config CHARGING_STATUS_TRIGGER
+    bool "Enable trigger support"
+    default y
+    help
+      Enable trigger support for charging status changes.
+
+config CHARGING_STATUS_INIT_PRIORITY
+    int "Init priority"
+    default 80
+    range 0 99
+    help
+      Device driver initialization priority.
+
+module = CHARGING_STATUS
+module-str = charging_status
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # CHARGING_STATUS
