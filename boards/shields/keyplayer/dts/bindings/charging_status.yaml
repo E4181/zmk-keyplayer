@@ -1,10 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
 description: TP4056 Charging Status Detector
 compatible: "charging-status"
 
 include:
   - base.yaml
+  - gpio.yaml
 
-child-binding:
-  description: GPIO pin for CHRG signal
-  type: phandle-array
-  required: true
+properties:
+  status-gpios:
+    required: true
+    type: phandle-array
+    description: GPIO pin for CHRG signal (active low)
+
+  label:
+    type: string
+    description: Human readable string describing the device
