@@ -11,6 +11,11 @@
 #include <zephyr/sys/util.h>
 #include "charging_status.h"  /* 充电状态接口 */
 
+/* 定义M_PI（如果未定义） */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
 LOG_MODULE_REGISTER(charging_breathe, CONFIG_ZMK_LOG_LEVEL);
 
 /* 硬编码配置 - P1.06引脚 */
@@ -47,10 +52,6 @@ struct charging_breathe_data {
     uint32_t pwm_off_cycles;             /* PWM熄灭周期数 */
     uint32_t pwm_counter;                /* PWM计数器 */
     bool pwm_state;                      /* PWM当前状态 */
-    
-    /* 充电状态跟踪 */
-    bool last_charging_state;            /* 上次充电状态 */
-    bool charging_state_changed;         /* 充电状态是否变化 */
 };
 
 /* 全局实例 */
@@ -64,8 +65,7 @@ static void update_breathing_pattern(void);
 static void set_led_state(bool state);
 static void start_breathing(void);
 static void stop_breathing(void);
-static void update_charging_state_handler(void);
-static void check_charging_state(void);
+static void set_led_on(void);
 
 /* 初始化GPIO引脚 */
 static int init_led_gpio(void)
@@ -314,56 +314,6 @@ static void set_led_on(void)
     breathe_data.current_state = BREATHE_STATE_ON;
 }
 
-/* 检查充电状态并更新LED */
-static void check_charging_state(void)
-{
-    static uint32_t last_check_time = 0;
-    uint32_t current_time = k_uptime_get_32();
-    
-    /* 限制检查频率，每500ms检查一次 */
-    if ((current_time - last_check_time) < 500) {
-        return;
-    }
-    last_check_time = current_time;
-    
-    /* 获取当前充电状态 */
-    bool is_charging = charging_status_is_charging();
-    
-    /* 检查状态是否变化 */
-    if (is_charging != breathe_data.last_charging_state) {
-        breathe_data.charging_state_changed = true;
-        breathe_data.last_charging_state = is_charging;
-        
-        LOG_INF("充电状态变化: %s -> %s",
-               breathe_data.last_charging_state ? "充电" : "未充电",
-               is_charging ? "充电" : "未充电");
-    }
-    
-    /* 根据充电状态控制LED */
-    if (is_charging) {
-        /* 正在充电：开始呼吸效果 */
-        if (breathe_data.charging_state_changed || 
-            breathe_data.current_state != BREATHE_STATE_BREATHING) {
-            start_breathing();
-        }
-    } else {
-        /* 未充电：停止呼吸效果，关闭LED */
-        if (breathe_data.charging_state_changed || 
-            breathe_data.current_state != BREATHE_STATE_OFF) {
-            stop_breathing();
-        }
-    }
-    
-    breathe_data.charging_state_changed = false;
-}
-
-/* 充电状态更新处理函数 */
-static void update_charging_state_handler(void)
-{
-    /* 直接检查充电状态并更新LED */
-    check_charging_state();
-}
-
 /* 初始化函数 */
 static int charging_breathe_init(void)
 {
@@ -382,8 +332,6 @@ static int charging_breathe_init(void)
     breathe_data.pwm_off_cycles = 0;
     breathe_data.pwm_counter = 0;
     breathe_data.pwm_state = false;
-    breathe_data.last_charging_state = false;
-    breathe_data.charging_state_changed = false;
     
     /* 初始化GPIO引脚 */
     ret = init_led_gpio();
@@ -396,14 +344,14 @@ static int charging_breathe_init(void)
     k_work_init_delayable(&breathe_data.breathe_work, breathe_work_handler);
     k_work_init_delayable(&breathe_data.pwm_work, pwm_work_handler);
     
-    /* 获取初始充电状态 */
-    bool init_charging = charging_status_is_charging();
-    breathe_data.last_charging_state = init_charging;
+    LOG_INF("初始充电状态: %s", charging_status_is_charging() ? "充电" : "未充电");
     
-    LOG_INF("初始充电状态: %s", init_charging ? "充电" : "未充电");
-    
-    /* 初始状态：LED关闭 */
-    stop_breathing();
+    /* 根据初始状态设置LED */
+    if (charging_status_is_charging()) {
+        start_breathing();
+    } else {
+        stop_breathing();
+    }
     
     LOG_INF("充电呼吸灯控制初始化完成");
     
@@ -447,7 +395,12 @@ bool charging_breathe_is_led_on(void)
 /* 手动触发充电状态检查 */
 void charging_breathe_check_now(void)
 {
-    check_charging_state();
+    /* 根据当前充电状态更新LED */
+    if (charging_status_is_charging()) {
+        start_breathing();
+    } else {
+        stop_breathing();
+    }
 }
 
 /* 设置呼吸周期 */
@@ -472,4 +425,4 @@ int charging_breathe_reinit(void)
 }
 
 /* Zephyr初始化宏 */
-SYS_INIT(charging_breathe_init, APPLICATION, 80);  /* 在充电状态监测之后初始化 */
+SYS_INIT(charging_breathe_init, APPLICATION, 70);  /* 优先级低于充电状态监测（90） */

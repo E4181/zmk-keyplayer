@@ -8,13 +8,10 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include "charging_status.h"
-#include "charging_breathe.h"
+#include "charging_status.h"  /* 充电状态接口 */
+#include "charging_breathe.h"  /* 呼吸灯控制接口 */
 
-/* 硬编码日志级别 - 设置为INFO级别，重要事件可见 */
-#define CHARGING_STATUS_LOG_LEVEL 3  /* INFO级别 */
-
-LOG_MODULE_REGISTER(charging_status, CHARGING_STATUS_LOG_LEVEL);
+LOG_MODULE_REGISTER(charging_status, CONFIG_ZMK_LOG_LEVEL);
 
 /* 硬编码配置 - P1.09引脚 */
 #define CHRG_GPIO_PORT DT_NODELABEL(gpio1)  /* GPIO1外设 */
@@ -53,7 +50,7 @@ struct charging_status_data {
 /* 全局实例 */
 static struct charging_status_data charger_data;
 
-/* 状态字符串映射 */
+/* 状态字符串映射 - 与头文件中的枚举对应 */
 static const char* state_strings[] = {
     "UNKNOWN",
     "CHARGING",
@@ -307,8 +304,8 @@ static void report_state_change(charging_state_t old_state, charging_state_t new
     LOG_INF("响应延迟: %dms", DEBOUNCE_DELAY_MS);
     LOG_INF("========================================");
     
-    /* 更新上次报告的状态 */
-    charger_data.last_reported_state = new_state;
+    /* 更新上次状态 */
+    charger_data.last_state = new_state;
     
     /* 通知呼吸灯状态变化 */
     if (new_state == CHARGING_STATE_CHARGING) {
