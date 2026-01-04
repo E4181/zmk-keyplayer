@@ -17,8 +17,8 @@ endif # ZMK_BACKLIGHT
 
 # Charging Status Driver Configuration
 
-menuconfig CHARGING_STATUS
-    bool "TP4056 Charging Status Driver (Hardcoded P1.09)"
+config CHARGING_STATUS
+    bool "Enable TP4056 Charging Status Driver"
     default y
     help
       Enable driver for TP4056 charging status detection on P1.09.
@@ -33,10 +33,4 @@ config CHARGING_STATUS_LOG_LEVEL
       Log level for charging status driver.
       0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG
 
-config CHARGING_STATUS_PERIODIC_LOG
-    bool "Enable periodic logging of charging status"
-    default y
-    help
-      Enable periodic logging of charging status every 5 seconds.
-
-endif # CHARGING_STATUS
+endif
