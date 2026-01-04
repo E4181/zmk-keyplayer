@@ -91,9 +91,9 @@ uint32_t charging_status_get_interrupt_count(void);
 /**
  * @brief 获取上次状态变化时间
  * 
- * @return uint64_t 上次状态变化时间（毫秒，从系统启动开始）
+ * @return int64_t 上次状态变化时间（毫秒，从系统启动开始）
  */
-uint64_t charging_status_get_last_change_time(void);
+int64_t charging_status_get_last_change_time(void);
 
 /**
  * @brief 检查是否在快速轮询模式

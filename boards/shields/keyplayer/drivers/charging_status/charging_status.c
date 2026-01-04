@@ -43,10 +43,10 @@ struct charging_status_data {
     uint32_t state_change_count;       /* 状态变化计数 */
     uint32_t interrupt_count;          /* 中断计数 */
     uint32_t poll_interval_sec;        /* 当前轮询间隔（秒） */
+    int64_t last_change_time;          /* 上次状态变化时间（毫秒） */
     bool is_quick_polling;             /* 是否处于快速轮询模式 */
     bool is_debouncing;                /* 是否正在防抖 */
     bool interrupt_enabled;            /* 中断是否启用 */
-    k_timeout_t last_change_time;      /* 上次状态变化时间 */
 };
 
 /* 全局实例 */
@@ -197,9 +197,9 @@ static void update_poll_interval(void)
         /* 未充电：可以延长检测间隔 */
         /* 如果最近1分钟内有状态变化，保持5秒间隔 */
         int64_t now = k_uptime_get();
-        int64_t last_change_ms = k_ticks_to_ms_floor64(charger_data.last_change_time.ticks);
+        int64_t last_change_ms = charger_data.last_change_time;
         
-        if ((now - last_change_ms) < 60000) { /* 1分钟内 */
+        if ((now - last_change_ms) < (60 * 1000)) { /* 1分钟内 */
             charger_data.poll_interval_sec = NORMAL_POLL_INTERVAL_SEC;
         } else {
             /* 长时间稳定：延长到30秒 */
@@ -268,7 +268,7 @@ static void update_charging_state(int pin_state)
         charger_data.state_change_count++;
         
         /* 记录状态变化时间 */
-        charger_data.last_change_time = k_timeout_end_calc(K_SECONDS(0));
+        charger_data.last_change_time = k_uptime_get();
         
         /* 报告状态变化 */
         report_state_change(old_state, new_state);
@@ -292,7 +292,7 @@ static void report_state_change(charging_state_t old_state, charging_state_t new
     LOG_INF("========================================");
     LOG_INF("充电状态变化检测到！");
     LOG_INF("========================================");
-    LOG_INF("变化时间: %lldms", k_uptime_get());
+    LOG_INF("变化时间: %lldms", (long long)k_uptime_get());
     LOG_INF("旧状态: %s", state_strings[old_state]);
     LOG_INF("新状态: %s", state_strings[new_state]);
     LOG_INF("CHRG引脚电平: %d (%s)", 
@@ -328,7 +328,7 @@ static int charging_status_init(void)
     charger_data.is_quick_polling = false;
     charger_data.is_debouncing = false;
     charger_data.interrupt_enabled = false;
-    charger_data.last_change_time = K_TIMEOUT_ABS_MS(0);
+    charger_data.last_change_time = 0;
     
     /* 获取GPIO1设备 */
     charger_data.gpio_dev = DEVICE_DT_GET(CHRG_GPIO_PORT);
@@ -390,7 +390,7 @@ static int charging_status_init(void)
                init_pin_state);
         
         /* 记录初始状态变化时间 */
-        charger_data.last_change_time = k_timeout_end_calc(K_SECONDS(0));
+        charger_data.last_change_time = k_uptime_get();
     } else {
         LOG_ERR("读取初始引脚状态失败: %d", init_pin_state);
     }
@@ -484,9 +484,9 @@ uint32_t charging_status_get_interrupt_count(void)
 }
 
 /* 获取状态变化时间（毫秒） */
-uint64_t charging_status_get_last_change_time(void)
+int64_t charging_status_get_last_change_time(void)
 {
-    return k_ticks_to_ms_floor64(charger_data.last_change_time.ticks);
+    return charger_data.last_change_time;
 }
 
 /* 检查是否在快速轮询模式 */
